@@ -1,11 +1,28 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
 import path from "node:path";
-import { isInside } from "./paths";
+import { run as execRun } from "./exec";
+import { hubPaths, isInside } from "./paths";
 import type { LoadedProject } from "./registry";
+import { readHubConfig } from "./registry";
 
-export type RunStatus = "running" | "succeeded" | "failed" | "stopped";
+/**
+ * Runs project commands and keeps track of them across hub restarts.
+ *
+ * Output goes to a log file per run instead of a pipe, so a dev server keeps
+ * running (and logging) when the hub restarts or crashes. On boot the hub reads
+ * runs.json and re-attaches ("adopts") every process group that is still alive.
+ */
+
+/** `exited` = ended while the hub wasn't its parent, so the exit code is unknown. */
+export type RunStatus =
+	| "running"
+	| "succeeded"
+	| "failed"
+	| "stopped"
+	| "exited";
 
 export type Run = {
 	id: string;
@@ -14,33 +31,38 @@ export type Run = {
 	command: string;
 	cwd: string;
 	longRunning: boolean;
+	/** Process group id (the spawned shell's pid). */
 	pid?: number;
 	status: RunStatus;
 	exitCode: number | null;
 	startedAt: number;
 	endedAt?: number;
-	lines: string[];
+	/** True when this hub instance re-attached to a run started by a previous one. */
+	adopted?: boolean;
 };
 
-type RunState = Run & { child?: ChildProcess; events: EventEmitter };
+type RunState = Run & {
+	logFile: string;
+	child?: ChildProcess;
+	events: EventEmitter;
+	/** Bytes of the log file already turned into lines. */
+	offset: number;
+	partial: string;
+};
 
-const MAX_LINES = 5000;
 const MAX_RUNS = 100;
+const MAX_REPLAY_BYTES = 512 * 1024;
 
 // Kept on globalThis so runs survive Vite hot reloads of this module in dev.
 const store = globalThis as typeof globalThis & {
 	__devhubRuns?: Map<string, RunState>;
 	__devhubShellEnv?: Promise<NodeJS.ProcessEnv>;
-	__devhubExitHook?: boolean;
+	__devhubRunnerBooted?: boolean;
+	__devhubStopOnExit?: boolean;
 };
 store.__devhubRuns ??= new Map();
 const runs = store.__devhubRuns;
 
-/**
- * GUI/launchd processes on macOS don't load ~/.zshrc, so `node`, `pnpm`, nvm and
- * friends are missing from PATH. Capture the environment of an interactive login
- * shell once and reuse it for every command.
- */
 /**
  * The hub's own server settings must not leak into project commands: an
  * inherited PORT makes dev servers collide with the hub, and NODE_ENV=production
@@ -60,6 +82,11 @@ export function withoutHubEnv(env: NodeJS.ProcessEnv) {
 	return clean;
 }
 
+/**
+ * GUI/launchd processes on macOS don't load ~/.zshrc, so `node`, `pnpm`, nvm and
+ * friends are missing from PATH. Capture the environment of an interactive login
+ * shell once and reuse it for every command.
+ */
 export function shellEnv() {
 	store.__devhubShellEnv ??= new Promise((resolve) => {
 		const shell = process.env.SHELL || "/bin/zsh";
@@ -87,23 +114,215 @@ export function shellEnv() {
 	return store.__devhubShellEnv;
 }
 
-function killGroup(child: ChildProcess, signal: NodeJS.Signals) {
-	if (!child.pid) return;
+// Strip ANSI color/cursor codes so logs render as plain text.
+const ESC = String.fromCharCode(27);
+const BEL = String.fromCharCode(7);
+const ANSI = new RegExp(
+	`${ESC}\\[[0-9;?]*[A-Za-z]|${ESC}\\][^${BEL}]*${BEL}`,
+	"g",
+);
+
+export function toLines(text: string) {
+	return text
+		.replace(ANSI, "")
+		.split(/\r?\n|\r/)
+		.filter((l) => l !== "");
+}
+
+function publicRun(r: RunState): Run {
+	const {
+		child: _c,
+		events: _e,
+		offset: _o,
+		partial: _p,
+		logFile: _l,
+		...rest
+	} = r;
+	return rest;
+}
+
+/** True while any process in the group is alive. */
+function groupAlive(pgid: number) {
 	try {
-		// Negative pid = the whole process group (dev servers spawn children).
-		process.kill(-child.pid, signal);
-	} catch {
-		child.kill(signal);
+		process.kill(-pgid, 0);
+		return true;
+	} catch (err) {
+		return (err as NodeJS.ErrnoException).code === "EPERM";
 	}
 }
 
-if (!store.__devhubExitHook) {
-	store.__devhubExitHook = true;
-	// Don't leave orphaned dev servers holding ports when the hub quits.
+function killGroup(pgid: number, signal: NodeJS.Signals) {
+	try {
+		process.kill(-pgid, signal);
+	} catch {
+		try {
+			process.kill(pgid, signal);
+		} catch {
+			// Already gone.
+		}
+	}
+}
+
+/** Parses ps `etime` ([[dd-]hh:]mm:ss) into seconds. */
+export function parseEtime(etime: string) {
+	const m = etime.trim().match(/^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/);
+	if (!m) return null;
+	const [, d, h, min, s] = m;
+	return (
+		Number(d ?? 0) * 86400 +
+		Number(h ?? 0) * 3600 +
+		Number(min) * 60 +
+		Number(s)
+	);
+}
+
+/**
+ * Is the process group we recorded still the same one? A live group leader must
+ * have started around `startedAt` (guards against pid reuse). A group whose
+ * leader already exited can't be reused while members live, so it's ours.
+ */
+async function isSameRun(pid: number, startedAt: number) {
+	if (!groupAlive(pid)) return false;
+	const out = await execRun("ps", ["-o", "etime=", "-p", String(pid)]);
+	if (!out?.trim()) return true;
+	const seconds = parseEtime(out);
+	if (seconds === null) return true;
+	return Math.abs(Date.now() - seconds * 1000 - startedAt) < 15_000;
+}
+
+// ---------------------------------------------------------------- persistence
+
+let saveTimer: NodeJS.Timeout | null = null;
+function save() {
+	if (saveTimer) return;
+	saveTimer = setTimeout(() => {
+		saveTimer = null;
+		const data = [...runs.values()].map((r) => ({
+			...publicRun(r),
+			adopted: undefined,
+			logFile: r.logFile,
+		}));
+		try {
+			fs.mkdirSync(path.dirname(hubPaths.runs()), { recursive: true });
+			fs.writeFileSync(hubPaths.runs(), JSON.stringify(data, null, 2));
+		} catch {
+			// Best effort: persistence must never break running commands.
+		}
+	}, 100);
+	saveTimer.unref();
+}
+
+function finish(
+	run: RunState,
+	status: RunStatus,
+	exitCode: number | null,
+	note: string,
+) {
+	if (run.status === "running" || run.status === "stopped") {
+		run.status = run.status === "stopped" ? "stopped" : status;
+	}
+	run.exitCode = exitCode;
+	run.endedAt = Date.now();
+	run.child = undefined;
+	readNew(run);
+	flushPartial(run);
+	fs.appendFileSync(run.logFile, `[devhub] ${note}\n`);
+	readNew(run);
+	run.events.emit("end", publicRun(run));
+	prune();
+	save();
+}
+
+async function boot() {
+	let saved: (Run & { logFile: string })[] = [];
+	try {
+		saved = JSON.parse(fs.readFileSync(hubPaths.runs(), "utf8"));
+	} catch {
+		return;
+	}
+	for (const s of saved) {
+		if (runs.has(s.id)) continue;
+		const run: RunState = {
+			...s,
+			events: new EventEmitter(),
+			offset: fileSize(s.logFile),
+			partial: "",
+		};
+		if (s.status === "running" && s.pid) {
+			// Decide before publishing the run, so nobody sees a half-restored state.
+			if (await isSameRun(s.pid, s.startedAt)) run.adopted = true;
+			else {
+				run.status = "exited";
+				run.endedAt = Date.now();
+			}
+		} else {
+			// The previous hub may have died while this run was being stopped.
+			run.endedAt ??= Date.now();
+		}
+		if (!runs.has(run.id)) runs.set(run.id, run);
+	}
+	save();
+}
+
+function fileSize(file: string) {
+	try {
+		return fs.statSync(file).size;
+	} catch {
+		return 0;
+	}
+}
+
+// ---------------------------------------------------------------- log tailing
+
+function readNew(run: RunState) {
+	const size = fileSize(run.logFile);
+	if (size < run.offset) run.offset = 0; // truncated
+	if (size === run.offset) return;
+	const fd = fs.openSync(run.logFile, "r");
+	try {
+		const buf = Buffer.alloc(size - run.offset);
+		fs.readSync(fd, buf, 0, buf.length, run.offset);
+		run.offset = size;
+		const text = run.partial + buf.toString("utf8");
+		const lastBreak = Math.max(text.lastIndexOf("\n"), text.lastIndexOf("\r"));
+		run.partial = text.slice(lastBreak + 1);
+		for (const line of toLines(text.slice(0, lastBreak + 1)))
+			run.events.emit("line", line);
+	} finally {
+		fs.closeSync(fd);
+	}
+}
+
+function flushPartial(run: RunState) {
+	if (!run.partial) return;
+	for (const line of toLines(run.partial)) run.events.emit("line", line);
+	run.partial = "";
+}
+
+// One timer for all runs: tail running logs and notice adopted runs exiting.
+function tick() {
+	for (const run of runs.values()) {
+		if (run.endedAt) continue;
+		readNew(run);
+		if (!run.child && run.pid && !groupAlive(run.pid)) {
+			finish(run, "exited", null, "process exited");
+		}
+	}
+}
+
+if (!store.__devhubRunnerBooted) {
+	store.__devhubRunnerBooted = true;
+	void boot();
+	setInterval(tick, 300).unref();
+	readHubConfig()
+		.then((c) => {
+			store.__devhubStopOnExit = c.stopProcessesOnExit;
+		})
+		.catch(() => {});
 	const stopAll = () => {
+		if (!store.__devhubStopOnExit) return;
 		for (const run of runs.values())
-			if (run.child && run.status === "running")
-				killGroup(run.child, "SIGTERM");
+			if (run.pid && run.status === "running") killGroup(run.pid, "SIGTERM");
 	};
 	process.once("exit", stopAll);
 	// A signal kills Node without firing "exit" (launchd and Ctrl-C both send one).
@@ -117,34 +336,17 @@ if (!store.__devhubExitHook) {
 	}
 }
 
-// Strip ANSI color/cursor codes so logs render as plain text.
-const ESC = String.fromCharCode(27);
-const BEL = String.fromCharCode(7);
-const ANSI = new RegExp(
-	`${ESC}\\[[0-9;?]*[A-Za-z]|${ESC}\\][^${BEL}]*${BEL}`,
-	"g",
-);
-
-function publicRun(r: RunState): Run {
-	const { child: _child, events: _events, ...rest } = r;
-	return { ...rest, lines: [] };
-}
-
-function append(run: RunState, text: string) {
-	for (const line of text.replace(ANSI, "").split(/\r?\n/)) {
-		if (line === "") continue;
-		run.lines.push(line);
-		run.events.emit("line", line);
-	}
-	if (run.lines.length > MAX_LINES)
-		run.lines.splice(0, run.lines.length - MAX_LINES);
-}
-
 function prune() {
-	const finished = [...runs.values()].filter((r) => r.status !== "running");
-	for (const r of finished.slice(0, Math.max(0, runs.size - MAX_RUNS)))
+	const finished = [...runs.values()]
+		.filter((r) => r.status !== "running")
+		.sort((a, b) => a.startedAt - b.startedAt);
+	for (const r of finished.slice(0, Math.max(0, runs.size - MAX_RUNS))) {
 		runs.delete(r.id);
+		fs.rm(r.logFile, { force: true }, () => {});
+	}
 }
+
+// ---------------------------------------------------------------- public API
 
 export function resolveCommand(
 	project: Extract<LoadedProject, { ok: true }>,
@@ -172,14 +374,26 @@ export async function startRun(
 	if (active) return publicRun(active);
 
 	const env = await shellEnv();
-	const child = spawn(env.SHELL || "/bin/sh", ["-c", cmd.command], {
-		cwd: cmd.cwd,
-		env: { ...env, FORCE_COLOR: "0", DEVHUB: "1" },
-		detached: true,
-		stdio: ["ignore", "pipe", "pipe"],
-	});
+	const id = randomUUID();
+	fs.mkdirSync(hubPaths.logs(), { recursive: true });
+	const logFile = path.join(hubPaths.logs(), `${id}.log`);
+	fs.writeFileSync(logFile, `$ ${cmd.command}\n`);
+	const fd = fs.openSync(logFile, "a");
+	let child: ChildProcess;
+	try {
+		child = spawn(env.SHELL || "/bin/sh", ["-c", cmd.command], {
+			cwd: cmd.cwd,
+			env: { ...env, FORCE_COLOR: "0", DEVHUB: "1" },
+			// Own process group, so Stop can kill the whole tree and a hub
+			// restart (or Ctrl-C in the hub's terminal) doesn't take it down.
+			detached: true,
+			stdio: ["ignore", fd, fd],
+		});
+	} finally {
+		fs.closeSync(fd);
+	}
 	const run: RunState = {
-		id: randomUUID(),
+		id,
 		projectId: project.id,
 		commandKey: key,
 		command: cmd.command,
@@ -189,43 +403,45 @@ export async function startRun(
 		status: "running",
 		exitCode: null,
 		startedAt: Date.now(),
-		lines: [],
+		logFile,
 		child,
 		events: new EventEmitter(),
+		offset: 0,
+		partial: "",
 	};
 	runs.set(run.id, run);
-	append(run, `$ ${cmd.command}`);
-	child.stdout?.on("data", (d: Buffer) => append(run, d.toString()));
-	child.stderr?.on("data", (d: Buffer) => append(run, d.toString()));
-	child.on("error", (err) => append(run, `[devhub] ${err.message}`));
-	child.on("close", (code, signal) => {
-		if (run.status === "running")
-			run.status = code === 0 ? "succeeded" : "failed";
-		run.exitCode = code;
-		run.endedAt = Date.now();
-		run.child = undefined;
-		append(run, `[devhub] exited with ${signal ?? `code ${code}`}`);
-		run.events.emit("end", publicRun(run));
-		prune();
+	child.unref();
+	child.on("error", (err) =>
+		fs.appendFileSync(logFile, `[devhub] ${err.message}\n`),
+	);
+	child.on("exit", (code, signal) => {
+		finish(
+			run,
+			code === 0 ? "succeeded" : "failed",
+			code,
+			`exited with ${signal ?? `code ${code}`}`,
+		);
 	});
+	save();
 	return publicRun(run);
 }
 
 export function stopRun(id: string) {
 	const run = runs.get(id);
-	if (!run?.child || run.status !== "running") return;
+	if (!run?.pid || run.status !== "running") return;
 	run.status = "stopped";
-	const child = run.child;
-	killGroup(child, "SIGTERM");
+	const pid = run.pid;
+	killGroup(pid, "SIGTERM");
+	save();
 	setTimeout(() => {
-		if (run.child === child) killGroup(child, "SIGKILL");
+		if (groupAlive(pid)) killGroup(pid, "SIGKILL");
 	}, 5000).unref();
 }
 
 export function waitForRun(id: string, timeoutMs = 5 * 60_000) {
 	const run = runs.get(id);
 	if (!run) return Promise.reject(new Error("Unknown run"));
-	if (run.status !== "running") return Promise.resolve(publicRun(run));
+	if (run.endedAt) return Promise.resolve(publicRun(run));
 	return new Promise<Run>((resolve, reject) => {
 		const timer = setTimeout(
 			() => reject(new Error("Timed out waiting for command")),
@@ -238,6 +454,11 @@ export function waitForRun(id: string, timeoutMs = 5 * 60_000) {
 	});
 }
 
+export function getRun(id: string) {
+	const run = runs.get(id);
+	return run ? publicRun(run) : null;
+}
+
 export function listRuns(projectId?: string) {
 	return [...runs.values()]
 		.filter((r) => !projectId || r.projectId === projectId)
@@ -245,14 +466,40 @@ export function listRuns(projectId?: string) {
 		.map(publicRun);
 }
 
-/** Hub-owned processes still running for a project (started with `longRunning`). */
-export function activeRuns(projectId: string) {
-	return [...runs.values()].filter(
-		(r) => r.projectId === projectId && r.status === "running",
-	);
+/** Processes still running for a project (hub-started or adopted). */
+export function activeRuns(projectId?: string) {
+	return [...runs.values()]
+		.filter(
+			(r) =>
+				(!projectId || r.projectId === projectId) && r.status === "running",
+		)
+		.map(publicRun);
 }
 
-/** Replays buffered lines, then streams new ones. Returns an unsubscribe fn. */
+function readTail(file: string, maxBytes: number, end = fileSize(file)) {
+	const size = Math.min(end, fileSize(file));
+	if (size === 0) return "";
+	const start = Math.max(0, size - maxBytes);
+	const fd = fs.openSync(file, "r");
+	try {
+		const buf = Buffer.alloc(size - start);
+		fs.readSync(fd, buf, 0, buf.length, start);
+		const text = buf.toString("utf8");
+		// Drop the first (possibly cut) line when we didn't start at 0.
+		return start > 0 ? text.slice(text.indexOf("\n") + 1) : text;
+	} finally {
+		fs.closeSync(fd);
+	}
+}
+
+/** Last `limit` lines of a run's output. */
+export function runLogTail(id: string, limit = 200) {
+	const run = runs.get(id);
+	if (!run) return null;
+	return toLines(readTail(run.logFile, MAX_REPLAY_BYTES)).slice(-limit);
+}
+
+/** Replays the log so far, then streams new lines. Returns an unsubscribe fn. */
 export function subscribeRun(
 	id: string,
 	onLine: (line: string) => void,
@@ -260,8 +507,22 @@ export function subscribeRun(
 ) {
 	const run = runs.get(id);
 	if (!run) return null;
-	for (const line of run.lines) onLine(line);
-	if (run.status !== "running") {
+	const live = !run.endedAt;
+	if (live) readNew(run);
+	// Lines up to `offset` were already emitted as events, so replay exactly that
+	// range from the file (minus the unfinished last line), then listen for more.
+	let replay = readTail(
+		run.logFile,
+		MAX_REPLAY_BYTES,
+		live ? run.offset : undefined,
+	);
+	if (live)
+		replay = replay.slice(
+			0,
+			Math.max(replay.lastIndexOf("\n"), replay.lastIndexOf("\r")) + 1,
+		);
+	for (const line of toLines(replay)) onLine(line);
+	if (!live) {
 		onEnd(publicRun(run));
 		return () => {};
 	}

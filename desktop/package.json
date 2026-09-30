@@ -1,0 +1,14 @@
+{
+  "name": "local-dev-hub-menubar",
+  "private": true,
+  "version": "0.2.0",
+  "description": "Menu-bar companion for Local Dev Hub (Tauri v2)",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "icons": "tauri icon icons/source.png"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

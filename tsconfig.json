@@ -1,5 +1,6 @@
 {
   "include": ["**/*.ts", "**/*.tsx"],
+  "exclude": ["node_modules", "adapters/nextjs"],
   "compilerOptions": {
     "target": "ES2022",
     "jsx": "react-jsx",

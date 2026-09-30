@@ -1,6 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { LogViewer } from "#/components/LogViewer";
+import { ProjectWarnings } from "#/components/ProjectCard";
+import { formatUsage, StartControls } from "#/components/StartControls";
 import {
 	Button,
 	Card,
@@ -16,11 +18,9 @@ import {
 import {
 	getProjectDetail,
 	openRepo,
-	restartProject,
 	runCommand,
-	startProject,
+	snapshotAction,
 	stopCommandRun,
-	stopProject,
 	trustProject,
 } from "#/lib/api";
 import { loginAs, loginIntoScenario } from "#/lib/magic-login-client";
@@ -31,17 +31,27 @@ export const Route = createFileRoute("/projects/$projectId")({
 	component: ProjectPage,
 });
 
+/** What the output panel shows: a command run or a container's logs. */
+type LogSource =
+	| { kind: "run"; id: string }
+	| { kind: "container"; name: string };
+
 function ProjectPage() {
 	const project = Route.useLoaderData();
 	const action = useAction();
-	const [selectedRun, setSelectedRun] = useState<string | null>(null);
+	const [source, setSource] = useState<LogSource | null>(null);
+	const [startError, setStartError] = useState<string | null>(null);
 	useAutoRefresh();
 
 	const id = project.id;
-	const runId = selectedRun ?? project.runs[0]?.id ?? null;
+	const current: LogSource | null =
+		source ??
+		(project.runs[0] ? { kind: "run", id: project.runs[0].id } : null);
 	const isUp = project.status === "running" || project.status === "partial";
 	const hasStart = project.commandKeys.includes("start");
-	const selectRun = (run: RunView | undefined) => run && setSelectedRun(run.id);
+	const showRun = (run: RunView | undefined) => {
+		if (run) setSource({ kind: "run", id: run.id });
+	};
 
 	return (
 		<div className="space-y-10">
@@ -57,53 +67,24 @@ function ProjectPage() {
 						{project.description && (
 							<p className="mt-1 text-zinc-500">{project.description}</p>
 						)}
+						<ProjectWarnings project={project} />
 					</div>
 					<div className="flex flex-wrap items-center gap-2">
 						{project.mainUrl && (
 							<ExternalLink href={project.mainUrl}>Open App</ExternalLink>
 						)}
-						{hasStart &&
-							(isUp ? (
-								<>
-									<Button
-										size="sm"
-										pending={action.pending === "restart"}
-										onClick={() =>
-											action
-												.run("restart", () => restartProject({ data: { id } }))
-												.then(selectRun)
-										}
-									>
-										Restart
-									</Button>
-									<Button
-										size="sm"
-										variant="danger"
-										pending={action.pending === "stop"}
-										onClick={() =>
-											action.run("stop", () => stopProject({ data: { id } }))
-										}
-									>
-										Stop
-									</Button>
-								</>
-							) : (
-								<Button
-									size="sm"
-									variant="primary"
-									pending={action.pending === "start"}
-									onClick={() =>
-										action
-											.run("start", () => startProject({ data: { id } }))
-											.then(selectRun)
-									}
-								>
-									Start
-								</Button>
-							))}
+						{hasStart && project.trusted && (
+							<StartControls
+								projectId={id}
+								isUp={isUp}
+								onRun={showRun}
+								onError={setStartError}
+							/>
+						)}
 					</div>
 				</div>
 				<ErrorBanner error={project.error ?? null} />
+				<ErrorBanner error={startError} onDismiss={() => setStartError(null)} />
 				<ErrorBanner error={action.error} onDismiss={action.clearError} />
 			</header>
 
@@ -130,12 +111,38 @@ function ProjectPage() {
 								<span className="min-w-0 flex-1 truncate text-xs text-zinc-500">
 									{s.connection ? <Mono>{s.connection}</Mono> : s.detail}
 								</span>
+								{s.proxyUrl && (
+									<a
+										href={s.proxyUrl}
+										target="_blank"
+										rel="noreferrer"
+										className="font-mono text-xs text-violet-600 hover:underline dark:text-violet-400"
+									>
+										{s.proxyUrl.replace(/^http:\/\//, "")}
+									</a>
+								)}
+								{s.container && (
+									<Button
+										size="sm"
+										variant="ghost"
+										onClick={() =>
+											setSource({
+												kind: "container",
+												name: s.container as string,
+											})
+										}
+									>
+										Logs
+									</Button>
+								)}
 								{s.url && <ExternalLink href={s.url}>Open</ExternalLink>}
 							</div>
 						))}
 					</Card>
 				</Section>
 			)}
+
+			{project.env.length > 0 && <EnvironmentSection env={project.env} />}
 
 			{project.links.length > 0 && (
 				<Section title="Links">
@@ -207,17 +214,13 @@ function ProjectPage() {
 										<div className="text-xs text-zinc-500">{s.description}</div>
 									)}
 									<div className="mt-1 text-xs text-zinc-500">
-										{s.seed && (
-											<>
-												seed <Mono>{s.seed}</Mono>
-											</>
-										)}
-										{s.seed && s.persona && " · "}
-										{s.persona && (
-											<>
-												as <Mono>{s.persona}</Mono>
-											</>
-										)}
+										{[
+											s.snapshot && `snapshot ${s.snapshot}`,
+											s.seed && `seed ${s.seed}`,
+											s.persona && `as ${s.persona}`,
+										]
+											.filter(Boolean)
+											.join(" · ")}
 									</div>
 								</div>
 								<Button
@@ -237,12 +240,17 @@ function ProjectPage() {
 				</Section>
 			)}
 
+			{project.database && (
+				<DatabaseSection project={project} trusted={project.trusted} />
+			)}
+
 			{project.commands.length > 0 && (
 				<Section title="Commands">
 					{!project.trusted && (
 						<Card className="space-y-3 border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-900 dark:bg-amber-950/30">
 							<p>
-								<strong>Review before running.</strong> These commands come from
+								<strong>Review before running.</strong> These commands
+								{project.database ? " and the database target" : ""} come from
 								this repository's <Mono>.dev/project.yaml</Mono> and run as your
 								user. You'll be asked again if they change.
 							</p>
@@ -283,7 +291,7 @@ function ProjectPage() {
 											.run(`cmd-${c.key}`, () =>
 												runCommand({ data: { id, key: c.key } }),
 											)
-											.then(selectRun)
+											.then(showRun)
 									}
 								>
 									Run
@@ -294,15 +302,15 @@ function ProjectPage() {
 				</Section>
 			)}
 
-			{project.runs.length > 0 && (
+			{(project.runs.length > 0 || current?.kind === "container") && (
 				<Section title="Output">
 					<div className="flex flex-wrap gap-2">
 						{project.runs.slice(0, 10).map((r) => (
 							<RunChip
 								key={r.id}
 								run={r}
-								active={r.id === runId}
-								onSelect={() => setSelectedRun(r.id)}
+								active={current?.kind === "run" && r.id === current.id}
+								onSelect={() => setSource({ kind: "run", id: r.id })}
 								onStop={() =>
 									action.run(`stop-${r.id}`, () =>
 										stopCommandRun({ data: { runId: r.id } }),
@@ -310,8 +318,26 @@ function ProjectPage() {
 								}
 							/>
 						))}
+						{project.containers.map((name) => (
+							<button
+								key={name}
+								type="button"
+								onClick={() => setSource({ kind: "container", name })}
+								className={`rounded-md border px-2.5 py-1.5 text-xs hover:bg-zinc-50 dark:hover:bg-zinc-800 ${current?.kind === "container" && current.name === name ? "border-zinc-900 dark:border-zinc-100" : "border-zinc-200 dark:border-zinc-700"}`}
+							>
+								🐳 {name}
+							</button>
+						))}
 					</div>
-					{runId && <LogViewer runId={runId} />}
+					{current && (
+						<LogViewer
+							src={
+								current.kind === "run"
+									? `/api/runs/${current.id}/logs`
+									: `/api/containers/${encodeURIComponent(current.name)}/logs`
+							}
+						/>
+					)}
 				</Section>
 			)}
 
@@ -375,6 +401,35 @@ function Overview({
 						<span className="text-zinc-400">not a git repository</span>
 					)}
 				</dd>
+				{project.proxyUrl && (
+					<>
+						<dt className="text-zinc-500">Stable URL</dt>
+						<dd>
+							<a
+								href={project.proxyUrl}
+								target="_blank"
+								rel="noreferrer"
+								className="font-mono text-[0.8125rem] text-violet-600 hover:underline dark:text-violet-400"
+							>
+								{project.proxyUrl}
+							</a>
+						</dd>
+					</>
+				)}
+				{project.usage && (
+					<>
+						<dt className="text-zinc-500">Usage</dt>
+						<dd>
+							{formatUsage(project.usage)}
+							<span className="ml-2 text-xs text-zinc-500">
+								{project.usage.processes} process
+								{project.usage.processes === 1 ? "" : "es"}
+								{project.containers.length > 0 &&
+									` · ${project.containers.length} container${project.containers.length === 1 ? "" : "s"}`}
+							</span>
+						</dd>
+					</>
+				)}
 				{project.stack.length > 0 && (
 					<>
 						<dt className="text-zinc-500">Stack</dt>
@@ -406,6 +461,167 @@ function Overview({
 	);
 }
 
+function EnvironmentSection({ env }: { env: ProjectDetail["env"] }) {
+	return (
+		<section id="environment" className="scroll-mt-20">
+			<Section title="Environment">
+				<Card className="divide-y divide-zinc-100 text-sm dark:divide-zinc-800">
+					{env.map((e) => (
+						<div key={e.dir} className="space-y-1.5 px-4 py-3">
+							<div className="flex flex-wrap items-center gap-2">
+								<Mono>{e.dir === "." ? "" : `${e.dir}/`}.env</Mono>
+								<span className="text-xs text-zinc-500">vs {e.template}</span>
+								{!e.hasEnv ? (
+									<span className="text-xs font-medium text-red-600 dark:text-red-400">
+										missing: copy {e.template} to .env
+									</span>
+								) : e.missing.length === 0 ? (
+									<span className="text-xs text-emerald-600 dark:text-emerald-400">
+										all keys set
+									</span>
+								) : (
+									<span className="text-xs text-amber-600 dark:text-amber-400">
+										{e.missing.length} key{e.missing.length === 1 ? "" : "s"}{" "}
+										missing
+									</span>
+								)}
+							</div>
+							{e.hasEnv && e.missing.length > 0 && (
+								<div className="flex flex-wrap gap-1.5">
+									{e.missing.map((k) => (
+										<Mono
+											key={k}
+											className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+										>
+											{k}
+										</Mono>
+									))}
+								</div>
+							)}
+						</div>
+					))}
+				</Card>
+				<p className="text-xs text-zinc-500">
+					Only key names are compared; values never leave your files.
+				</p>
+			</Section>
+		</section>
+	);
+}
+
+function DatabaseSection({
+	project,
+	trusted,
+}: {
+	project: ProjectDetail;
+	trusted: boolean;
+}) {
+	const action = useAction();
+	const [name, setName] = useState("");
+	const db = project.database;
+	if (!db) return null;
+	const run = (a: "save" | "restore" | "delete", n: string) =>
+		action.run(`${a}-${n}`, () =>
+			snapshotAction({ data: { id: project.id, action: a, name: n } }),
+		);
+
+	return (
+		<Section title="Database">
+			<Card className="divide-y divide-zinc-100 text-sm dark:divide-zinc-800">
+				<div className="flex flex-wrap items-center gap-3 px-4 py-3">
+					<span className="rounded-md bg-zinc-100 px-2 py-0.5 text-xs dark:bg-zinc-800">
+						{db.type}
+					</span>
+					<Mono className="min-w-0 flex-1 truncate text-zinc-600 dark:text-zinc-400">
+						{db.target}
+					</Mono>
+				</div>
+				{project.snapshots.map((s) => (
+					<div
+						key={s.name}
+						className="flex flex-wrap items-center gap-3 px-4 py-2.5"
+					>
+						<span className="w-48 truncate font-medium">{s.name}</span>
+						<span className="text-xs text-zinc-500">
+							{new Date(s.createdAt).toLocaleString()} ·{" "}
+							{formatBytes(s.sizeBytes)}
+						</span>
+						<div className="ml-auto flex gap-2">
+							<Button
+								size="sm"
+								disabled={!trusted}
+								pending={action.pending === `restore-${s.name}`}
+								onClick={() => {
+									if (
+										confirm(
+											`Replace the current ${db.type} database with snapshot "${s.name}"?`,
+										)
+									)
+										run("restore", s.name);
+								}}
+							>
+								Restore
+							</Button>
+							<Button
+								size="sm"
+								variant="ghost"
+								disabled={!trusted}
+								pending={action.pending === `delete-${s.name}`}
+								onClick={() => {
+									if (confirm(`Delete snapshot "${s.name}"?`))
+										run("delete", s.name);
+								}}
+							>
+								Delete
+							</Button>
+						</div>
+					</div>
+				))}
+				<form
+					className="flex gap-2 px-4 py-3"
+					onSubmit={async (e) => {
+						e.preventDefault();
+						const n = name.trim();
+						if (!n) return;
+						await run("save", n);
+						setName("");
+					}}
+				>
+					<input
+						value={name}
+						onChange={(e) =>
+							setName(e.target.value.replace(/[^A-Za-z0-9._-]/g, "-"))
+						}
+						placeholder="snapshot-name"
+						aria-label="Snapshot name"
+						className="h-8 min-w-0 flex-1 rounded-md border border-zinc-200 bg-white px-2 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-900"
+					/>
+					<Button
+						type="submit"
+						variant="primary"
+						disabled={!trusted || !name.trim()}
+						pending={action.pending === `save-${name.trim()}`}
+					>
+						Save snapshot
+					</Button>
+				</form>
+			</Card>
+			{!trusted && (
+				<p className="text-xs text-zinc-500">
+					Trust this project's commands (below) to enable snapshots.
+				</p>
+			)}
+			<ErrorBanner error={action.error} onDismiss={action.clearError} />
+		</Section>
+	);
+}
+
+function formatBytes(n: number) {
+	if (n < 1024) return `${n} B`;
+	if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+	return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
 function RunChip({
 	run,
 	active,
@@ -422,6 +638,7 @@ function RunChip({
 		succeeded: "text-emerald-600 dark:text-emerald-400",
 		failed: "text-red-600 dark:text-red-400",
 		stopped: "text-zinc-500",
+		exited: "text-zinc-500",
 	}[run.status];
 	return (
 		<div
@@ -431,11 +648,13 @@ function RunChip({
 				type="button"
 				onClick={onSelect}
 				className="flex items-center gap-2 px-2.5 py-1.5 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+				title={run.adopted ? "Re-attached after a hub restart" : undefined}
 			>
 				<span className="font-medium">{run.commandKey}</span>
 				<span className={color}>
 					{run.status === "failed" ? `failed (${run.exitCode})` : run.status}
 				</span>
+				{run.adopted && <span className="text-zinc-400">↺</span>}
 				<span className="text-zinc-400">
 					{new Date(run.startedAt).toLocaleTimeString()}
 				</span>

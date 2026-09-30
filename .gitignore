@@ -12,3 +12,7 @@ dist-ssr
 __unconfig*
 todos.json
 examples/demo-app/.scenario.json
+# Tauri menu-bar app
+!desktop/dist
+desktop/src-tauri/target
+desktop/src-tauri/gen

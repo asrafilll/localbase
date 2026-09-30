@@ -7,6 +7,7 @@ import {
 } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import type { ReactNode } from "react";
+import { CommandPalette } from "#/components/CommandPalette";
 import appCss from "../styles.css?url";
 
 export const Route = createRootRoute({
@@ -71,8 +72,17 @@ function RootDocument({ children }: { children: ReactNode }) {
 							<NavLink to="/ports">Ports</NavLink>
 							<NavLink to="/settings">Settings</NavLink>
 						</nav>
+						<button
+							type="button"
+							onClick={() => window.dispatchEvent(new Event("devhub:palette"))}
+							className="ml-auto flex items-center gap-2 rounded-md border border-zinc-200 px-2.5 py-1 text-xs text-zinc-500 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+						>
+							Search or run…
+							<kbd className="font-sans text-zinc-400">⌘K</kbd>
+						</button>
 					</div>
 				</header>
+				<CommandPalette />
 				<main className="mx-auto max-w-6xl px-4 py-8">{children}</main>
 				{import.meta.env.DEV && (
 					<TanStackDevtools

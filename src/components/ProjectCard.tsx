@@ -1,16 +1,15 @@
 import { Link } from "@tanstack/react-router";
-import { restartProject, startProject, stopProject } from "#/lib/api";
+import { useState } from "react";
 import { loginAs } from "#/lib/magic-login-client";
 import type { ProjectSummary } from "#/lib/types";
+import { formatUsage, StartControls } from "./StartControls";
 import {
-	Button,
 	Card,
 	ErrorBanner,
 	ExternalLink,
 	Mono,
 	StatusDot,
 	StatusLabel,
-	useAction,
 } from "./ui";
 
 export function PersonaMenu({
@@ -51,8 +50,37 @@ export function PersonaMenu({
 	);
 }
 
+/** Small warning chips: missing env keys, ports shared with other projects. */
+export function ProjectWarnings({ project }: { project: ProjectSummary }) {
+	if (!project.envMissing && project.sharedPorts.length === 0) return null;
+	return (
+		<div className="mt-3 flex flex-wrap gap-1.5 text-xs">
+			{project.envMissing > 0 && (
+				<Link
+					to="/projects/$projectId"
+					params={{ projectId: project.id }}
+					hash="environment"
+					className="rounded-md bg-amber-100 px-2 py-0.5 text-amber-800 hover:underline dark:bg-amber-950 dark:text-amber-300"
+				>
+					⚠ {project.envMissing} .env key{project.envMissing === 1 ? "" : "s"}{" "}
+					missing
+				</Link>
+			)}
+			{project.sharedPorts.map((s) => (
+				<span
+					key={s.port}
+					title={`Also configured by ${s.projects.join(", ")}: they can't run at the same time.`}
+					className="rounded-md bg-zinc-100 px-2 py-0.5 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400"
+				>
+					:{s.port} shared with {s.projects.join(", ")}
+				</span>
+			))}
+		</div>
+	);
+}
+
 export function ProjectCard({ project }: { project: ProjectSummary }) {
-	const action = useAction();
+	const [error, setError] = useState<string | null>(null);
 	const hasStart = project.commandKeys.includes("start");
 	const isUp = project.status === "running" || project.status === "partial";
 	const extraLinks = project.services.filter(
@@ -113,6 +141,21 @@ export function ProjectCard({ project }: { project: ProjectSummary }) {
 			)}
 
 			<dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-zinc-500">
+				{project.proxyUrl && (
+					<>
+						<dt>URL</dt>
+						<dd className="truncate">
+							<a
+								href={project.proxyUrl}
+								target="_blank"
+								rel="noreferrer"
+								className="font-mono text-violet-600 hover:underline dark:text-violet-400"
+							>
+								{project.proxyUrl.replace(/^http:\/\//, "")}
+							</a>
+						</dd>
+					</>
+				)}
 				{project.git && (
 					<>
 						<dt>Branch</dt>
@@ -130,10 +173,18 @@ export function ProjectCard({ project }: { project: ProjectSummary }) {
 				)}
 				<dt>Repo</dt>
 				<dd className="truncate font-mono">{project.rootDisplay}</dd>
+				{project.usage && (
+					<>
+						<dt>Usage</dt>
+						<dd>{formatUsage(project.usage)}</dd>
+					</>
+				)}
 			</dl>
 
+			<ProjectWarnings project={project} />
+
 			<div className="mt-4">
-				<ErrorBanner error={action.error} onDismiss={action.clearError} />
+				<ErrorBanner error={error} onDismiss={() => setError(null)} />
 			</div>
 
 			<div className="mt-auto flex flex-wrap items-center gap-2 pt-4">
@@ -145,54 +196,15 @@ export function ProjectCard({ project }: { project: ProjectSummary }) {
 						{s.label}
 					</ExternalLink>
 				))}
-				<div className="ml-auto flex items-center gap-2">
-					{hasStart &&
-						(isUp ? (
-							<>
-								<Button
-									size="sm"
-									variant="ghost"
-									pending={action.pending === "restart"}
-									onClick={() =>
-										action.run("restart", () =>
-											restartProject({ data: { id: project.id } }),
-										)
-									}
-								>
-									Restart
-								</Button>
-								<Button
-									size="sm"
-									pending={action.pending === "stop"}
-									onClick={() =>
-										action.run("stop", () =>
-											stopProject({ data: { id: project.id } }),
-										)
-									}
-								>
-									Stop
-								</Button>
-							</>
-						) : (
-							<Button
-								size="sm"
-								variant="primary"
-								pending={action.pending === "start"}
-								onClick={() =>
-									action.run("start", () =>
-										startProject({ data: { id: project.id } }),
-									)
-								}
-							>
-								Start
-							</Button>
-						))}
-					<PersonaMenu
-						project={project}
-						onError={(msg) =>
-							action.run("login", () => Promise.reject(new Error(msg)))
-						}
-					/>
+				<div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+					{hasStart && (
+						<StartControls
+							projectId={project.id}
+							isUp={isUp}
+							onError={setError}
+						/>
+					)}
+					<PersonaMenu project={project} onError={setError} />
 				</div>
 			</div>
 		</Card>

@@ -8,11 +8,12 @@
 	"files": {
 		"ignoreUnknown": false,
 		"includes": [
-			"**/src/**/*",
-			"**/tests/**/*",
-			"**/adapters/**/*.ts",
-			"**/examples/**/*.ts",
-			"**/scripts/**/*",
+			"src/**/*",
+			"tests/**/*",
+			"adapters/**/*.ts",
+			"examples/**/*.ts",
+			"scripts/**/*",
+			"bin/**/*.mjs",
 			"**/.vscode/**/*",
 			"**/vite.config.ts",
 			"**/vitest.config.ts",

@@ -1,8 +1,11 @@
 import { useRouter } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
-/** Live tail of a command run, streamed over SSE from /api/runs/$runId/logs. */
-export function LogViewer({ runId }: { runId: string }) {
+/**
+ * Live log tail over SSE: `line` events, then an optional `end`.
+ * Used for command runs (/api/runs/:id/logs) and containers (/api/containers/:name/logs).
+ */
+export function LogViewer({ src }: { src: string }) {
 	const router = useRouter();
 	const [lines, setLines] = useState<string[]>([]);
 	const [ended, setEnded] = useState(false);
@@ -12,7 +15,7 @@ export function LogViewer({ runId }: { runId: string }) {
 	useEffect(() => {
 		setLines([]);
 		setEnded(false);
-		const source = new EventSource(`/api/runs/${runId}/logs`);
+		const source = new EventSource(src);
 		source.addEventListener("line", (e) => {
 			const line = JSON.parse((e as MessageEvent).data) as string;
 			setLines((prev) =>
@@ -22,11 +25,11 @@ export function LogViewer({ runId }: { runId: string }) {
 		source.addEventListener("end", () => {
 			setEnded(true);
 			source.close();
-			router.invalidate();
+			router.invalidate().catch(() => {});
 		});
 		source.addEventListener("error", () => source.close());
 		return () => source.close();
-	}, [runId, router]);
+	}, [src, router]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll after every new batch of lines
 	useEffect(() => {

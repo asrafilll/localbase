@@ -13,6 +13,8 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as PortsRouteImport } from './routes/ports'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ProjectsProjectIdRouteImport } from './routes/projects.$projectId'
+import { Route as ApiV1SplatRouteImport } from './routes/api/v1/$'
+import { Route as ApiContainersNameLogsRouteImport } from './routes/api/containers.$name.logs'
 import { Route as ApiRunsRunIdLogsRouteImport } from './routes/api/runs.$runId.logs'
 
 const IndexRoute = IndexRouteImport.update({
@@ -35,6 +37,16 @@ const ProjectsProjectIdRoute = ProjectsProjectIdRouteImport.update({
   path: '/projects/$projectId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiV1SplatRoute = ApiV1SplatRouteImport.update({
+  id: '/api/v1/$',
+  path: '/api/v1/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiContainersNameLogsRoute = ApiContainersNameLogsRouteImport.update({
+  id: '/api/containers/$name/logs',
+  path: '/api/containers/$name/logs',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiRunsRunIdLogsRoute = ApiRunsRunIdLogsRouteImport.update({
   id: '/api/runs/$runId/logs',
   path: '/api/runs/$runId/logs',
@@ -46,6 +58,8 @@ export interface FileRoutesByFullPath {
   '/ports': typeof PortsRoute
   '/settings': typeof SettingsRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
+  '/api/v1/$': typeof ApiV1SplatRoute
+  '/api/containers/$name/logs': typeof ApiContainersNameLogsRoute
   '/api/runs/$runId/logs': typeof ApiRunsRunIdLogsRoute
 }
 export interface FileRoutesByTo {
@@ -53,6 +67,8 @@ export interface FileRoutesByTo {
   '/ports': typeof PortsRoute
   '/settings': typeof SettingsRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
+  '/api/v1/$': typeof ApiV1SplatRoute
+  '/api/containers/$name/logs': typeof ApiContainersNameLogsRoute
   '/api/runs/$runId/logs': typeof ApiRunsRunIdLogsRoute
 }
 export interface FileRoutesById {
@@ -61,6 +77,8 @@ export interface FileRoutesById {
   '/ports': typeof PortsRoute
   '/settings': typeof SettingsRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
+  '/api/v1/$': typeof ApiV1SplatRoute
+  '/api/containers/$name/logs': typeof ApiContainersNameLogsRoute
   '/api/runs/$runId/logs': typeof ApiRunsRunIdLogsRoute
 }
 export interface FileRouteTypes {
@@ -70,6 +88,8 @@ export interface FileRouteTypes {
     | '/ports'
     | '/settings'
     | '/projects/$projectId'
+    | '/api/v1/$'
+    | '/api/containers/$name/logs'
     | '/api/runs/$runId/logs'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -77,6 +97,8 @@ export interface FileRouteTypes {
     | '/ports'
     | '/settings'
     | '/projects/$projectId'
+    | '/api/v1/$'
+    | '/api/containers/$name/logs'
     | '/api/runs/$runId/logs'
   id:
     | '__root__'
@@ -84,6 +106,8 @@ export interface FileRouteTypes {
     | '/ports'
     | '/settings'
     | '/projects/$projectId'
+    | '/api/v1/$'
+    | '/api/containers/$name/logs'
     | '/api/runs/$runId/logs'
   fileRoutesById: FileRoutesById
 }
@@ -92,6 +116,8 @@ export interface RootRouteChildren {
   PortsRoute: typeof PortsRoute
   SettingsRoute: typeof SettingsRoute
   ProjectsProjectIdRoute: typeof ProjectsProjectIdRoute
+  ApiV1SplatRoute: typeof ApiV1SplatRoute
+  ApiContainersNameLogsRoute: typeof ApiContainersNameLogsRoute
   ApiRunsRunIdLogsRoute: typeof ApiRunsRunIdLogsRoute
 }
 
@@ -125,6 +151,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/v1/$': {
+      id: '/api/v1/$'
+      path: '/api/v1/$'
+      fullPath: '/api/v1/$'
+      preLoaderRoute: typeof ApiV1SplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/containers/$name/logs': {
+      id: '/api/containers/$name/logs'
+      path: '/api/containers/$name/logs'
+      fullPath: '/api/containers/$name/logs'
+      preLoaderRoute: typeof ApiContainersNameLogsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/runs/$runId/logs': {
       id: '/api/runs/$runId/logs'
       path: '/api/runs/$runId/logs'
@@ -140,6 +180,8 @@ const rootRouteChildren: RootRouteChildren = {
   PortsRoute: PortsRoute,
   SettingsRoute: SettingsRoute,
   ProjectsProjectIdRoute: ProjectsProjectIdRoute,
+  ApiV1SplatRoute: ApiV1SplatRoute,
+  ApiContainersNameLogsRoute: ApiContainersNameLogsRoute,
   ApiRunsRunIdLogsRoute: ApiRunsRunIdLogsRoute,
 }
 export const routeTree = rootRouteImport

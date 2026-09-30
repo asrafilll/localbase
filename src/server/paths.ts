@@ -13,6 +13,10 @@ export const hubPaths = {
 	trust: () => path.join(hubHome(), "trust.json"),
 	privateKey: () => path.join(hubHome(), "magic-login", "private.pem"),
 	publicKey: () => path.join(hubHome(), "magic-login", "public.pem"),
+	runs: () => path.join(hubHome(), "runs.json"),
+	logs: () => path.join(hubHome(), "logs"),
+	snapshots: (projectId: string) =>
+		path.join(hubHome(), "snapshots", projectId),
 };
 
 export function expandHome(p: string) {

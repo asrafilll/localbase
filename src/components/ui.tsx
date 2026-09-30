@@ -237,7 +237,9 @@ export function useAutoRefresh(ms = 3000) {
 	const router = useRouter();
 	useEffect(() => {
 		const id = setInterval(() => {
-			if (document.visibilityState === "visible") router.invalidate();
+			// A refresh cut short by navigation or a hub restart is harmless.
+			if (document.visibilityState === "visible")
+				router.invalidate().catch(() => {});
 		}, ms);
 		return () => clearInterval(id);
 	}, [router, ms]);
@@ -262,7 +264,7 @@ export function useAction() {
 				return undefined;
 			} finally {
 				setPending(null);
-				router.invalidate();
+				router.invalidate().catch(() => {});
 			}
 		},
 		[router],

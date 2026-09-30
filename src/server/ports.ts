@@ -10,6 +10,8 @@ export type ListeningPort = {
 	process: string;
 	/** Full command line, when readable. */
 	commandLine?: string;
+	/** Process group id; hub-started commands own their group. */
+	pgid?: number;
 	cwd?: string;
 };
 
@@ -52,14 +54,14 @@ export function parseLsofCwd(output: string) {
 	return cwds;
 }
 
-/** Parses `ps -o pid=,args= -p <pids>` output into pid -> command line. */
-export function parsePsArgs(output: string) {
-	const args = new Map<number, string>();
+/** Parses `ps -o pid=,pgid=,args= -p <pids>` output. */
+export function parsePs(output: string) {
+	const procs = new Map<number, { pgid: number; args: string }>();
 	for (const line of output.split("\n")) {
-		const m = line.trim().match(/^(\d+)\s+(.*)$/);
-		if (m) args.set(Number(m[1]), m[2]);
+		const m = line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/);
+		if (m) procs.set(Number(m[1]), { pgid: Number(m[2]), args: m[3] });
 	}
-	return args;
+	return procs;
 }
 
 async function readCwds(pids: number[]) {
@@ -87,10 +89,11 @@ async function readCwds(pids: number[]) {
 	return out ? parseLsofCwd(out) : cwds;
 }
 
-async function readCommandLines(pids: number[]) {
-	if (pids.length === 0) return new Map<number, string>();
-	const out = await run("ps", ["-o", "pid=,args=", "-p", pids.join(",")]);
-	return out ? parsePsArgs(out) : new Map<number, string>();
+async function readProcs(pids: number[]) {
+	if (pids.length === 0)
+		return new Map<number, { pgid: number; args: string }>();
+	const out = await run("ps", ["-o", "pid=,pgid=,args=", "-p", pids.join(",")]);
+	return out ? parsePs(out) : new Map<number, { pgid: number; args: string }>();
 }
 
 async function detect(): Promise<ListeningPort[]> {
@@ -98,13 +101,11 @@ async function detect(): Promise<ListeningPort[]> {
 	if (out === null) return [];
 	const ports = parseLsofListen(out);
 	const pids = [...new Set(ports.map((p) => p.pid))];
-	const [cwds, commandLines] = await Promise.all([
-		readCwds(pids),
-		readCommandLines(pids),
-	]);
+	const [cwds, procs] = await Promise.all([readCwds(pids), readProcs(pids)]);
 	for (const p of ports) {
 		p.cwd = cwds.get(p.pid);
-		p.commandLine = commandLines.get(p.pid);
+		p.commandLine = procs.get(p.pid)?.args;
+		p.pgid = procs.get(p.pid)?.pgid;
 	}
 	return ports;
 }

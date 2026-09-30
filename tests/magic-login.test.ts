@@ -167,3 +167,109 @@ catch (RuntimeException $e) { echo 'ERR:' . $e->getMessage(); }`,
 		);
 	});
 });
+
+function hasCommand(cmd: string, args: string[]) {
+	try {
+		execFileSync(cmd, args, { stdio: "ignore" });
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+// PYTHON lets you point at an interpreter with a working `cryptography` build.
+const python = process.env.PYTHON ?? "python3";
+describe.runIf(
+	hasCommand(python, [
+		"-c",
+		"from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey",
+	]),
+)("magic login tokens (django adapter)", () => {
+	const verifyWithPython = (token: string, audience = "fitbase") =>
+		execFileSync(python, [
+			"-c",
+			`import sys, json
+sys.path.insert(0, ${JSON.stringify(path.resolve("adapters/django"))})
+from devhub_token import verify_devhub_token, safe_redirect, DevhubTokenError
+try:
+    print(json.dumps(verify_devhub_token(sys.argv[1], sys.argv[2], sys.argv[3])))
+except DevhubTokenError as e:
+    print("ERR:" + str(e))`,
+			token,
+			publicKeyEnv,
+			audience,
+		])
+			.toString()
+			.trim();
+
+	it("verifies a hub token", () => {
+		expect(
+			JSON.parse(verifyWithPython(signToken(claims(), privateKey))).sub,
+		).toBe("admin@fitbase.local");
+	});
+
+	it("rejects tampered, foreign and expired tokens", () => {
+		const [h, , s] = signToken(claims(), privateKey).split(".");
+		const forged = Buffer.from(
+			JSON.stringify(claims({ sub: "root@evil" })),
+		).toString("base64url");
+		expect(verifyWithPython(`${h}.${forged}.${s}`)).toBe(
+			"ERR:Invalid signature",
+		);
+		expect(verifyWithPython(signToken(claims(), privateKey), "other")).toBe(
+			"ERR:Token is for another project",
+		);
+		expect(
+			verifyWithPython(signToken(claims({ iat: 1000, exp: 1060 }), privateKey)),
+		).toBe("ERR:Token expired");
+	});
+});
+
+describe.runIf(
+	hasCommand("ruby", [
+		"-ropenssl",
+		"-e",
+		"exit(OpenSSL::VERSION >= '3.0' ? 0 : 1)",
+	]),
+)("magic login tokens (rails adapter)", () => {
+	const verifyWithRuby = (token: string, audience = "fitbase") =>
+		execFileSync("ruby", [
+			"-r",
+			path.resolve("adapters/rails/devhub_token.rb"),
+			"-e",
+			`begin
+  puts JSON.generate(DevhubToken.verify(ARGV[0], ARGV[1], ARGV[2]))
+rescue DevhubToken::Error => e
+  puts "ERR:#{e.message}"
+end`,
+			token,
+			publicKeyEnv,
+			audience,
+		])
+			.toString()
+			.trim();
+
+	it("verifies a hub token", () => {
+		expect(
+			JSON.parse(verifyWithRuby(signToken(claims(), privateKey))).persona,
+		).toBe("admin");
+	});
+
+	it("rejects tampered, foreign and expired tokens", () => {
+		const [h, , s] = signToken(claims(), privateKey).split(".");
+		const forged = Buffer.from(
+			JSON.stringify(claims({ sub: "root@evil" })),
+		).toString("base64url");
+		expect(verifyWithRuby(`${h}.${forged}.${s}`)).toBe("ERR:Invalid signature");
+		expect(verifyWithRuby(signToken(claims(), privateKey), "other")).toBe(
+			"ERR:Token is for another project",
+		);
+		expect(
+			verifyWithRuby(signToken(claims({ iat: 1000, exp: 1060 }), privateKey)),
+		).toBe("ERR:Token expired");
+		const other = generateKeyPairSync("ed25519").privateKey;
+		expect(verifyWithRuby(signToken(claims(), other))).toBe(
+			"ERR:Invalid signature",
+		);
+	});
+});

@@ -84,6 +84,20 @@ export const scenarioSchema = z.object({
 	persona: z.string().optional(),
 	/** Key of an entry in `commands` to run before logging in. */
 	seed: z.string().optional(),
+	/** Name of a database snapshot to restore before logging in (faster than a seed). */
+	snapshot: z.string().optional(),
+});
+
+export const databaseSchema = z.object({
+	type: z.enum(["postgres", "mysql", "sqlite"]),
+	/** Connection URL, e.g. postgres://user:pass@localhost:5432/app. */
+	url: z.string().optional(),
+	/** Read the URL from this key in the repo's .env instead (e.g. DATABASE_URL). */
+	urlEnv: z.string().optional(),
+	/** SQLite database file, relative to the repository root. */
+	path: z.string().optional(),
+	/** Run pg_dump/mysqldump inside this Docker container instead of on the host. */
+	container: z.string().optional(),
 });
 
 export const projectFileSchema = z.object({
@@ -104,8 +118,10 @@ export const projectFileSchema = z.object({
 	magicLogin: magicLoginSchema.optional(),
 	commands: z.record(z.string(), commandSchema).optional(),
 	scenarios: z.record(z.string(), scenarioSchema).optional(),
+	database: databaseSchema.optional(),
 });
 
+export type DatabaseConfig = z.infer<typeof databaseSchema>;
 export type ProjectFile = z.infer<typeof projectFileSchema>;
 export type ServiceConfig = z.infer<typeof serviceSchema>;
 export type CommandConfig = z.infer<typeof commandSchema>;
@@ -118,6 +134,16 @@ export const hubConfigSchema = z.object({
 	scanDirs: z.array(z.string()).default([]),
 	/** CLI used by "Open in editor", e.g. `code`, `cursor`, `zed`. */
 	editor: z.string().default("code"),
+	/**
+	 * Port of the per-project reverse proxy (`<project>.localhost:<port>`).
+	 * 0 disables it. On macOS, 80 works without sudo and gives http://<project>.localhost.
+	 */
+	proxyPort: z.number().int().min(0).max(65535).default(6970),
+	/**
+	 * Stop hub-started processes when the hub exits. Off by default: they keep
+	 * running and the hub re-attaches to them on its next start.
+	 */
+	stopProcessesOnExit: z.boolean().default(false),
 });
 
 export type HubConfig = z.infer<typeof hubConfigSchema>;

@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { RegisterProject } from "#/components/RegisterProject";
 import {
 	Button,
 	Card,
@@ -9,7 +9,7 @@ import {
 	Section,
 	useAction,
 } from "#/components/ui";
-import { getSettings, registerProject, unregisterProject } from "#/lib/api";
+import { getSettings, unregisterProject } from "#/lib/api";
 
 export const Route = createFileRoute("/settings")({
 	loader: () => getSettings(),
@@ -18,7 +18,6 @@ export const Route = createFileRoute("/settings")({
 
 function SettingsPage() {
 	const settings = Route.useLoaderData();
-	const [path, setPath] = useState("");
 	const action = useAction();
 
 	return (
@@ -72,36 +71,42 @@ function SettingsPage() {
 							)}
 						</div>
 					))}
-					<form
-						className="flex gap-2 px-4 py-3"
-						onSubmit={async (e) => {
-							e.preventDefault();
-							if (
-								await action.run("add", () =>
-									registerProject({ data: { path } }),
-								)
-							)
-								setPath("");
-						}}
-					>
-						<input
-							value={path}
-							onChange={(e) => setPath(e.target.value)}
-							placeholder="~/Projects/my-app"
-							aria-label="Repository path"
-							className="h-8 min-w-0 flex-1 rounded-md border border-zinc-200 bg-white px-2 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-900"
-						/>
-						<Button
-							type="submit"
-							variant="primary"
-							disabled={!path}
-							pending={action.pending === "add"}
-						>
-							Add project
-						</Button>
-					</form>
+					<div className="px-4 py-3">
+						<RegisterProject />
+					</div>
 				</Card>
 				<ErrorBanner error={action.error} onDismiss={action.clearError} />
+			</Section>
+
+			<Section title="Hub">
+				<Card className="divide-y divide-zinc-100 text-sm dark:divide-zinc-800">
+					<div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3">
+						<span className="w-48 font-medium">Per-project URLs</span>
+						<span className="text-zinc-600 dark:text-zinc-400">
+							{settings.proxyPort ? (
+								<>
+									<Mono>
+										http://&lt;project&gt;.localhost
+										{settings.proxyPort === 80 ? "" : `:${settings.proxyPort}`}
+									</Mono>{" "}
+									and <Mono>&lt;service&gt;.&lt;project&gt;.localhost</Mono>
+								</>
+							) : settings.configuredProxyPort ? (
+								`Not running: port ${settings.configuredProxyPort} is busy. Change proxyPort in config.yaml.`
+							) : (
+								"Disabled (proxyPort: 0)"
+							)}
+						</span>
+					</div>
+					<div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3">
+						<span className="w-48 font-medium">When the hub quits</span>
+						<span className="text-zinc-600 dark:text-zinc-400">
+							{settings.stopProcessesOnExit
+								? "Processes it started are stopped (stopProcessesOnExit: true)."
+								: "Processes it started keep running and are re-attached on the next start."}
+						</span>
+					</div>
+				</Card>
 			</Section>
 
 			<Section title="Magic Login key">

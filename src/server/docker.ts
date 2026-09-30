@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { cached, run } from "./exec";
 
 export type DockerContainer = {
@@ -70,3 +71,43 @@ async function detect() {
 }
 
 export const dockerContainers = cached(2000, detect);
+
+/** Follows `docker logs` for a container. Returns a function that stops following. */
+export function followContainerLogs(
+	name: string,
+	onLine: (line: string) => void,
+	onEnd: () => void,
+) {
+	const child = spawn("docker", ["logs", "--follow", "--tail", "300", name], {
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	// docker logs replays the container's stdout and stderr on separate
+	// streams; each needs its own buffer or half-lines get glued together.
+	const follow = (stream: NodeJS.ReadableStream) => {
+		let partial = "";
+		stream.on("data", (d: Buffer) => {
+			const lines = (partial + d.toString()).split(/\r?\n/);
+			partial = lines.pop() ?? "";
+			for (const line of lines) if (line) onLine(line);
+		});
+		stream.on("end", () => {
+			if (partial) onLine(partial);
+			partial = "";
+		});
+	};
+	follow(child.stdout);
+	follow(child.stderr);
+	let ended = false;
+	const end = () => {
+		if (!ended) {
+			ended = true;
+			onEnd();
+		}
+	};
+	child.once("error", (err) => {
+		onLine(`[devhub] ${err.message}`);
+		end();
+	});
+	child.once("close", end);
+	return () => child.kill();
+}

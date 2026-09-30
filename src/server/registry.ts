@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import YAML from "yaml";
+import { detectProject, toYaml } from "./detect";
 import { expandHome, hubPaths } from "./paths";
 import {
 	type HubConfig,
@@ -148,26 +149,45 @@ export async function removeProjectRoot(root: string) {
 	await writeHubConfig(config);
 }
 
-/** Writes a starter `.dev/project.yaml` (never overwrites) and registers the repo. */
-export async function scaffoldProject(root: string, port?: number) {
+/** What registering a folder would do: the existing file, or a detected draft. */
+export async function previewProject(root: string, port?: number) {
+	const resolved = path.resolve(expandHome(root));
+	const stat = await fs.stat(resolved).catch(() => null);
+	if (!stat?.isDirectory()) throw new Error(`Not a directory: ${resolved}`);
+	const file = path.join(resolved, PROJECT_FILE);
+	const existing = await fs.readFile(file, "utf8").catch(() => null);
+	if (existing !== null)
+		return { root: resolved, exists: true, yaml: existing, notes: [] };
+	const detection = await detectProject(resolved, port);
+	return {
+		root: resolved,
+		exists: false,
+		yaml: toYaml(detection),
+		notes: detection.notes,
+	};
+}
+
+/**
+ * Registers a repo, writing `.dev/project.yaml` first when it has none: either
+ * the (possibly user-edited) `yaml` from the preview, or a fresh detection.
+ */
+export async function scaffoldProject(
+	root: string,
+	port?: number,
+	yaml?: string,
+) {
 	const resolved = await addProjectRoot(root);
 	const file = path.join(resolved, PROJECT_FILE);
 	if (!(await exists(file))) {
-		const name = path.basename(resolved);
-		const url = `http://localhost:${port ?? 3000}`;
-		const starter: ProjectFile = {
-			name,
-			description: "",
-			services: { web: { label: "Web", kind: "web", url } },
-			commands: {
-				start: { command: "npm run dev", longRunning: true },
-			},
-		};
+		const text = yaml ?? toYaml(await detectProject(resolved, port));
+		const parsed = projectFileSchema.safeParse(YAML.parse(text));
+		if (!parsed.success) {
+			throw new Error(
+				`Invalid project file: ${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`,
+			);
+		}
 		await fs.mkdir(path.dirname(file), { recursive: true });
-		await fs.writeFile(
-			file,
-			`# Local Dev Hub project file. See examples/fitbase/.dev/project.yaml for every option.\n${YAML.stringify(starter)}`,
-		);
+		await fs.writeFile(file, text);
 	}
 	return resolved;
 }

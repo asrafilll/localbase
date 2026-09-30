@@ -5,7 +5,7 @@ import {
 	guessServiceType,
 	parseLsofCwd,
 	parseLsofListen,
-	parsePsArgs,
+	parsePs,
 } from "#/server/ports";
 
 describe("lsof parsing", () => {
@@ -41,12 +41,15 @@ describe("lsof parsing", () => {
 		expect(cwds.get(77)).toBe("/");
 	});
 
-	it("reads ps args", () => {
-		const args = parsePsArgs(
-			"  501 node /x/node_modules/.bin/next dev\n77 postgres -D /data\n",
+	it("reads ps pid, pgid and args", () => {
+		const procs = parsePs(
+			"  501   500 node /x/node_modules/.bin/next dev\n77 77 postgres -D /data\n",
 		);
-		expect(args.get(501)).toBe("node /x/node_modules/.bin/next dev");
-		expect(args.get(77)).toBe("postgres -D /data");
+		expect(procs.get(501)).toEqual({
+			pgid: 500,
+			args: "node /x/node_modules/.bin/next dev",
+		});
+		expect(procs.get(77)?.args).toBe("postgres -D /data");
 	});
 });
 

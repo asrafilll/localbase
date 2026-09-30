@@ -1,14 +1,8 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
-import {
-	Button,
-	Card,
-	ErrorBanner,
-	Mono,
-	useAction,
-	useAutoRefresh,
-} from "#/components/ui";
-import { getPorts, registerProject } from "#/lib/api";
+import { RegisterProject } from "#/components/RegisterProject";
+import { Button, Card, Mono, useAction, useAutoRefresh } from "#/components/ui";
+import { getPorts, killPort } from "#/lib/api";
 import type { PortView } from "#/lib/types";
 
 export const Route = createFileRoute("/ports")({
@@ -140,32 +134,41 @@ function PortRow({
 					</Mono>
 				</td>
 				<td className="px-4 py-3">
-					{port.projectId ? (
-						<Link
-							to="/projects/$projectId"
-							params={{ projectId: port.projectId }}
-							className="hover:underline"
-						>
-							{port.projectName}
-							{port.serviceKey && (
-								<span className="text-zinc-500"> · {port.serviceKey}</span>
-							)}
-						</Link>
-					) : port.isHub ? null : (
-						<button
-							type="button"
-							onClick={() => setOpen((o) => !o)}
-							className="text-xs font-medium text-violet-600 hover:underline dark:text-violet-400"
-						>
-							{open ? "Cancel" : "Register project"}
-						</button>
-					)}
+					<div className="flex flex-wrap items-center justify-between gap-2">
+						{port.projectId ? (
+							<Link
+								to="/projects/$projectId"
+								params={{ projectId: port.projectId }}
+								className="hover:underline"
+							>
+								{port.projectName}
+								{port.serviceKey && (
+									<span className="text-zinc-500"> · {port.serviceKey}</span>
+								)}
+							</Link>
+						) : port.isHub ? (
+							<span />
+						) : (
+							<button
+								type="button"
+								onClick={() => setOpen((o) => !o)}
+								className="text-xs font-medium text-violet-600 hover:underline dark:text-violet-400"
+							>
+								{open ? "Cancel" : "Register project"}
+							</button>
+						)}
+						{!port.isHub && <KillButton port={port} />}
+					</div>
 				</td>
 			</tr>
 			{open && !port.projectId && (
 				<tr>
 					<td colSpan={4} className="bg-zinc-50 px-4 py-4 dark:bg-zinc-950">
-						<RegisterForm port={port} />
+						<RegisterProject
+							initialPath={port.cwd ?? ""}
+							port={port.port}
+							autoFocus
+						/>
 					</td>
 				</tr>
 			)}
@@ -173,50 +176,33 @@ function PortRow({
 	);
 }
 
-function RegisterForm({ port }: { port: PortView }) {
-	const [path, setPath] = useState(port.cwd ?? "");
+function KillButton({ port }: { port: PortView }) {
 	const action = useAction();
-	const navigate = useNavigate();
+	const what = port.container
+		? `stop container ${port.container}`
+		: `stop ${port.process} (pid ${port.pid})`;
 	return (
-		<form
-			className="space-y-2"
-			onSubmit={async (e) => {
-				e.preventDefault();
-				const res = await action.run("register", () =>
-					registerProject({ data: { path, port: port.port } }),
-				);
-				if (res?.id)
-					navigate({
-						to: "/projects/$projectId",
-						params: { projectId: res.id },
-					});
-			}}
-		>
-			<label
-				className="block text-xs font-medium text-zinc-600 dark:text-zinc-400"
-				htmlFor={`register-${port.port}`}
-			>
-				Repository folder. A starter <Mono>.dev/project.yaml</Mono> is created
-				there if it doesn't exist.
-			</label>
-			<div className="flex gap-2">
-				<input
-					id={`register-${port.port}`}
-					value={path}
-					onChange={(e) => setPath(e.target.value)}
-					className="h-8 min-w-0 flex-1 rounded-md border border-zinc-200 bg-white px-2 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-900"
-					placeholder="~/Projects/my-app"
-				/>
-				<Button
-					type="submit"
-					variant="primary"
-					pending={action.pending === "register"}
-					disabled={!path}
+		<span className="flex items-center gap-2">
+			{action.error && (
+				<span
+					className="max-w-48 text-xs text-red-600 dark:text-red-400"
+					title={action.error}
 				>
-					Register
-				</Button>
-			</div>
-			<ErrorBanner error={action.error} onDismiss={action.clearError} />
-		</form>
+					{action.error}
+				</span>
+			)}
+			<Button
+				size="sm"
+				variant="ghost"
+				pending={action.pending === "kill"}
+				title={`Free :${port.port}: ${what}`}
+				onClick={() => {
+					if (confirm(`Free port ${port.port}? This will ${what}.`))
+						action.run("kill", () => killPort({ data: { port: port.port } }));
+				}}
+			>
+				{port.container ? "Stop" : "Kill"}
+			</Button>
+		</span>
 	);
 }

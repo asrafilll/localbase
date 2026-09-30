@@ -12,9 +12,11 @@ import type { ProjectFile } from "./schema";
 
 export function commandsHash(config: ProjectFile) {
 	const commands = config.commands ?? {};
-	const canonical = Object.keys(commands)
+	const canonical: unknown[] = Object.keys(commands)
 		.sort()
 		.map((k) => [k, commands[k]]);
+	// Snapshot restores overwrite a database, so the target is reviewed too.
+	if (config.database) canonical.push(["__database", config.database]);
 	return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
 }
 

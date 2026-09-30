@@ -5,6 +5,10 @@
   "imports": {
     "#/*": "./src/*"
   },
+  "bin": {
+    "devhub": "bin/devhub.mjs",
+    "devhub-mcp": "bin/devhub-mcp.mjs"
+  },
   "scripts": {
     "dev": "vite dev --host 127.0.0.1 --port 6969",
     "build": "vite build",
@@ -19,6 +23,7 @@
     "agent:uninstall": "node scripts/launchd.mjs uninstall"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "@tailwindcss/vite": "^4.1.18",
     "@tanstack/react-devtools": "^0.10.13",
     "@tanstack/react-router": "^1.170.40",
@@ -49,6 +54,6 @@
       "lightningcss"
     ]
   },
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local Dev Hub - one dashboard for every project running on your machine"
 }
