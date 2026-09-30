@@ -1,0 +1,54 @@
+{
+  "name": "local-dev-hub",
+  "private": true,
+  "type": "module",
+  "imports": {
+    "#/*": "./src/*"
+  },
+  "scripts": {
+    "dev": "vite dev --host 127.0.0.1 --port 6969",
+    "build": "vite build",
+    "start": "HOST=127.0.0.1 PORT=6969 node .output/server/index.mjs",
+    "generate-routes": "tsr generate",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "format": "biome format --write",
+    "lint": "biome lint",
+    "check": "biome check",
+    "agent:install": "node scripts/launchd.mjs install",
+    "agent:uninstall": "node scripts/launchd.mjs uninstall"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.1.18",
+    "@tanstack/react-devtools": "^0.10.13",
+    "@tanstack/react-router": "^1.170.40",
+    "@tanstack/react-router-devtools": "^1.167.2",
+    "@tanstack/react-start": "^1.168.59",
+    "nitro": "3.0.260610-beta",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "tailwindcss": "^4.1.18",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.5",
+    "@tanstack/devtools-vite": "^0.8.5",
+    "@tanstack/router-cli": "^1.132.0",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.0.1",
+    "typescript": "^6.0.2",
+    "vite": "^8.0.0",
+    "vitest": "^5.0.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "lightningcss"
+    ]
+  },
+  "version": "0.1.0",
+  "description": "Local Dev Hub - one dashboard for every project running on your machine"
+}
