@@ -360,6 +360,20 @@ server.registerTool(
 );
 
 server.registerTool(
+	"reassign_port",
+	{
+		title: "Move a project to a free port",
+		description:
+			"When a project's port is used by another project, rewrites its .dev/project.yaml (service URL + start command) to the next free port. The user must re-trust the changed start command in the dashboard afterwards.",
+		inputSchema: { project: projectArg },
+	},
+	tool(async ({ project }) => {
+		const p = await resolveProject(project);
+		return api("POST", `projects/${p.id}/reassign-port`, {});
+	}),
+);
+
+server.registerTool(
 	"kill_port",
 	{
 		title: "Free a port",

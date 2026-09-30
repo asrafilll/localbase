@@ -7,9 +7,11 @@ import {
 	publicKeyEnvValue,
 	publicKeyPem,
 } from "./magic-login";
+import type { Persona } from "./magic-setup";
 import { type OpenTarget, openPath } from "./open";
 import { expandHome, hubHome, hubPaths, tildify } from "./paths";
 import { proxyPortInUse } from "./proxy";
+import { reassignPort as reassignPortIn, takenPorts } from "./reassign";
 import {
 	getProject,
 	getValidProject,
@@ -151,13 +153,36 @@ export async function trustProject(id: string) {
 }
 
 export async function registerProject(p: string, port?: number, yaml?: string) {
-	const root = await scaffoldProject(expandHome(p), port, yaml);
+	const root = await scaffoldProject(
+		expandHome(p),
+		port,
+		yaml,
+		await takenPorts(path.resolve(expandHome(p))),
+	);
 	const project = (await loadProjects()).find((x) => x.root === root);
 	return { id: project?.id ?? null };
 }
 
-export function previewRegistration(p: string, port?: number) {
-	return previewProject(expandHome(p), port);
+export async function previewRegistration(p: string, port?: number) {
+	const root = path.resolve(expandHome(p));
+	return previewProject(root, port, await takenPorts(root));
+}
+
+/** Moves the project's web service to a free port (see reassign.ts). */
+export async function reassignPort(id: string) {
+	return reassignPortIn(await getValidProject(id));
+}
+
+/** What "Set up Magic Login" would write (nothing is changed). */
+export async function planMagicLoginSetup(id: string) {
+	const { planMagicLogin } = await import("./magic-setup");
+	return planMagicLogin(await getValidProject(id));
+}
+
+/** Writes the Magic Login setup planned above, with the reviewed personas. */
+export async function applyMagicLoginSetup(id: string, personas: Persona[]) {
+	const { applyMagicLogin } = await import("./magic-setup");
+	return applyMagicLogin(await getValidProject(id), personas);
 }
 
 export async function unregisterProject(id: string) {

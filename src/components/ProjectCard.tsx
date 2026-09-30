@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
+import { reassignPort } from "#/lib/api";
 import { loginAs } from "#/lib/magic-login-client";
 import type { ProjectSummary } from "#/lib/types";
 import { formatUsage, StartControls } from "./StartControls";
@@ -10,6 +11,7 @@ import {
 	Mono,
 	StatusDot,
 	StatusLabel,
+	useAction,
 } from "./ui";
 
 export function PersonaMenu({
@@ -52,29 +54,61 @@ export function PersonaMenu({
 
 /** Small warning chips: missing env keys, ports shared with other projects. */
 export function ProjectWarnings({ project }: { project: ProjectSummary }) {
-	if (!project.envMissing && project.sharedPorts.length === 0) return null;
+	const action = useAction();
+	const [moved, setMoved] = useState<string | null>(null);
+	const portTaken = project.services.some((s) =>
+		s.detail?.startsWith("port taken"),
+	);
+	const canMove = portTaken || project.sharedPorts.length > 0;
+	if (!project.envMissing && !canMove && !moved) return null;
 	return (
-		<div className="mt-3 flex flex-wrap gap-1.5 text-xs">
-			{project.envMissing > 0 && (
-				<Link
-					to="/projects/$projectId"
-					params={{ projectId: project.id }}
-					hash="environment"
-					className="rounded-md bg-amber-100 px-2 py-0.5 text-amber-800 hover:underline dark:bg-amber-950 dark:text-amber-300"
-				>
-					⚠ {project.envMissing} .env key{project.envMissing === 1 ? "" : "s"}{" "}
-					missing
-				</Link>
+		<div className="mt-3 space-y-1.5 text-xs">
+			<div className="flex flex-wrap items-center gap-1.5">
+				{project.envMissing > 0 && (
+					<Link
+						to="/projects/$projectId"
+						params={{ projectId: project.id }}
+						hash="environment"
+						className="rounded-md bg-amber-100 px-2 py-0.5 text-amber-800 hover:underline dark:bg-amber-950 dark:text-amber-300"
+					>
+						⚠ {project.envMissing} .env key{project.envMissing === 1 ? "" : "s"}{" "}
+						missing
+					</Link>
+				)}
+				{project.sharedPorts.map((s) => (
+					<span
+						key={s.port}
+						title={`Also configured by ${s.projects.join(", ")}: they can't run at the same time.`}
+						className="rounded-md bg-zinc-100 px-2 py-0.5 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400"
+					>
+						:{s.port} shared with {s.projects.join(", ")}
+					</span>
+				))}
+				{canMove && (
+					<button
+						type="button"
+						disabled={action.pending === "move"}
+						onClick={async () => {
+							const res = await action.run("move", () =>
+								reassignPort({ data: { id: project.id } }),
+							);
+							if (res)
+								setMoved(
+									`Moved from :${res.from} to :${res.to}. Review & trust the updated start command, then start it.`,
+								);
+						}}
+						className="rounded-md bg-violet-600 px-2 py-0.5 font-medium text-white hover:bg-violet-500 disabled:opacity-50"
+					>
+						{action.pending === "move" ? "Moving…" : "Use a free port"}
+					</button>
+				)}
+			</div>
+			{moved && (
+				<p className="text-emerald-600 dark:text-emerald-400">{moved}</p>
 			)}
-			{project.sharedPorts.map((s) => (
-				<span
-					key={s.port}
-					title={`Also configured by ${s.projects.join(", ")}: they can't run at the same time.`}
-					className="rounded-md bg-zinc-100 px-2 py-0.5 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400"
-				>
-					:{s.port} shared with {s.projects.join(", ")}
-				</span>
-			))}
+			{action.error && (
+				<p className="text-red-600 dark:text-red-400">{action.error}</p>
+			)}
 		</div>
 	);
 }
@@ -216,6 +250,17 @@ export function ProjectCard({ project }: { project: ProjectSummary }) {
 						/>
 					)}
 					<PersonaMenu project={project} onError={setError} />
+					{!project.magicLogin && !project.error && (
+						<Link
+							to="/projects/$projectId"
+							params={{ projectId: project.id }}
+							hash="magic-login"
+							title="Add one-click login as your dev users"
+							className="inline-flex h-7 items-center rounded-md border border-dashed border-violet-300 px-2.5 text-xs font-medium text-violet-700 hover:bg-violet-50 dark:border-violet-800 dark:text-violet-300 dark:hover:bg-violet-950"
+						>
+							Set up Magic Login
+						</Link>
+					)}
 				</div>
 			</div>
 		</Card>

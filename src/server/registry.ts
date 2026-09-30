@@ -150,7 +150,11 @@ export async function removeProjectRoot(root: string) {
 }
 
 /** What registering a folder would do: the existing file, or a detected draft. */
-export async function previewProject(root: string, port?: number) {
+export async function previewProject(
+	root: string,
+	port?: number,
+	taken?: Map<number, string>,
+) {
 	const resolved = path.resolve(expandHome(root));
 	const stat = await fs.stat(resolved).catch(() => null);
 	if (!stat?.isDirectory()) throw new Error(`Not a directory: ${resolved}`);
@@ -158,7 +162,7 @@ export async function previewProject(root: string, port?: number) {
 	const existing = await fs.readFile(file, "utf8").catch(() => null);
 	if (existing !== null)
 		return { root: resolved, exists: true, yaml: existing, notes: [] };
-	const detection = await detectProject(resolved, port);
+	const detection = await detectProject(resolved, port, taken);
 	return {
 		root: resolved,
 		exists: false,
@@ -175,11 +179,12 @@ export async function scaffoldProject(
 	root: string,
 	port?: number,
 	yaml?: string,
+	taken?: Map<number, string>,
 ) {
 	const resolved = await addProjectRoot(root);
 	const file = path.join(resolved, PROJECT_FILE);
 	if (!(await exists(file))) {
-		const text = yaml ?? toYaml(await detectProject(resolved, port));
+		const text = yaml ?? toYaml(await detectProject(resolved, port, taken));
 		const parsed = projectFileSchema.safeParse(YAML.parse(text));
 		if (!parsed.success) {
 			throw new Error(

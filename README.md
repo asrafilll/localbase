@@ -60,7 +60,17 @@ what's already there:
   `${VAR}` references so no password ends up in the file
 
 You review and edit the draft before it's written. Commit it: it contains no
-secrets. You can also write it by hand:
+secrets.
+
+**No two projects on the same port.** Most dev servers default to 3000 or
+5173. When the detected port is already used by another registered project or
+by a process outside this repo, the draft gets the next free port and a start
+command that really listens there (`npx --no-install vite dev --port 3001
+--strictPort`, `pnpm dev -p 3001`, or `PORT=3001` in the command's `env` for
+servers that read it). For a project that's already registered, **Use a free
+port** on its warning chip (or `devhub fix-port`) rewrites the service URL,
+`url`, Magic Login endpoint, links and start command in `.dev/project.yaml`,
+keeping your comments; review and trust the changed command, then start it. You can also write it by hand:
 
 ```yaml
 name: Fitbase
@@ -180,6 +190,27 @@ and everything listening from the repo, plus children) and its containers
 
 ## Magic Login
 
+**Set up Magic Login** (on a project's card, or the section on its page) does
+the steps below for you. It looks at how the app signs users in, finds dev
+accounts in seed/fixture files, shows every file it would add, and writes them
+on **Apply** (existing files are never overwritten; check `git diff`):
+
+| Detected | What Apply adds | Works right away |
+| --- | --- | --- |
+| Supabase (`@supabase/*`, `supabase/config.toml`) | only `magicLogin: {provider: supabase}` | yes |
+| Laravel | token + controller, a `local`-only route in `routes/web.php`, `DEVHUB_PUBLIC_KEY` in `.env` | yes |
+| Next.js + Auth.js (JWT) + Prisma | verifier + `app/api/devhub/login/route.ts`, key in `.env.development.local` | yes |
+| Next.js otherwise | the same route with `findUser()`/`startSession()` TODOs | after you fill them in |
+| Rails | token, controller, dev-only route in `config/routes.rb` | with Devise |
+| Django, Express/Fastify/Hono/Nest | the verifier files, plus the settings/route lines to add | after the listed steps |
+
+The **Supabase** provider needs no app code: the hub asks the project's *local*
+Supabase (`supabase start`) for a one-time magic link through the admin API
+(URL and service role key from `.env` or `supabase status`) and opens it.
+Hosted Supabase URLs are refused, so production users can't be impersonated.
+
+Doing it by hand:
+
 ```
 Hub (private key)  ── signs 60s JWT {aud: project, sub: persona.user, jti} ──▶
   browser opens http://localhost:8000/__devhub/login?token=…
@@ -224,6 +255,7 @@ devhub login [project] admin
 devhub scenario [project] pt-seven-left
 devhub snapshot [project] save clean-db
 devhub kill-port 3000
+devhub fix-port [project]   # move a project that collides with another to a free port
 ```
 
 Inside a registered repository you can omit the project. Add `--json` for
@@ -268,7 +300,8 @@ first time, right-click it in Finder → **Open**. Add it to
 
 Everything above is built on a JSON API at `/api/v1` (see
 [`src/server/rest.ts`](src/server/rest.ts)): `GET overview`, `GET ports`,
-`GET projects/:id`, `POST projects/:id/start|stop|restart`,
+`GET projects/:id`, `POST projects/:id/start|stop|restart|reassign-port`,
+`POST projects/:id/magic-login/plan|apply`,
 `POST projects/:id/commands/:key`, `POST projects/:id/login`,
 `POST projects/:id/scenarios/:key`, `POST projects/:id/snapshots`,
 `GET runs/:id?tail=`, `POST runs/:id/stop`, `POST ports/:port/kill`. POST bodies

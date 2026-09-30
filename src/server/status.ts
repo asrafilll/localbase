@@ -144,7 +144,14 @@ async function serviceView(
 	}
 
 	if (port) {
-		const owner = snap.ports.find((p) => p.port === port);
+		// Two processes can hold the same port (one on 127.0.0.1, one on ::1),
+		// so prefer the listener that belongs to this project.
+		const listeners = snap.ports.filter((p) => p.port === port);
+		const runPgids = runPgidsOf(project.id);
+		const foreign = listeners.filter((lp) =>
+			isForeignListener(project, service, lp, snap.docker.containers, runPgids),
+		);
+		const owner = listeners.find((lp) => !foreign.includes(lp)) ?? listeners[0];
 		let listening = Boolean(owner);
 		// lsof only sees our own user's processes; fall back to a TCP probe.
 		if (!listening)
@@ -156,16 +163,7 @@ async function serviceView(
 				status: "stopped",
 				detail: `nothing listening on :${port}`,
 			};
-		if (
-			owner &&
-			isForeignListener(
-				project,
-				service,
-				owner,
-				snap.docker.containers,
-				runPgidsOf(project.id),
-			)
-		) {
+		if (owner && foreign.includes(owner)) {
 			return {
 				...base,
 				status: "error",

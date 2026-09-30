@@ -383,7 +383,7 @@ export async function startRun(
 	try {
 		child = spawn(env.SHELL || "/bin/sh", ["-c", cmd.command], {
 			cwd: cmd.cwd,
-			env: { ...env, FORCE_COLOR: "0", DEVHUB: "1" },
+			env: { ...env, ...cmd.env, FORCE_COLOR: "0", DEVHUB: "1" },
 			// Own process group, so Stop can kill the whole tree and a hub
 			// restart (or Ctrl-C in the hub's terminal) doesn't take it down.
 			detached: true,

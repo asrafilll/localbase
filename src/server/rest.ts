@@ -10,6 +10,9 @@ import { allPorts, overview, projectDetail } from "./status";
  *   GET  projects/:id                      project detail
  *   POST projects/:id/start                {force?, killConflicts?}
  *   POST projects/:id/stop | restart
+ *   POST projects/:id/reassign-port        move its web service to a free port
+ *   POST projects/:id/magic-login/plan     what Magic Login setup would write
+ *   POST projects/:id/magic-login/apply    {personas} -> write it
  *   POST projects/:id/commands/:key
  *   POST projects/:id/login                {persona} -> {url}
  *   POST projects/:id/scenarios/:key       -> {url}
@@ -63,6 +66,12 @@ async function body<T extends z.ZodType>(
 	return parsed.data;
 }
 
+const personaInput = z.object({
+	key: z.string().regex(/^[A-Za-z0-9_-]+$/),
+	label: z.string(),
+	user: z.string().min(1),
+});
+
 async function route(request: Request, splat: string) {
 	const parts = splat.split("/").filter(Boolean).map(decodeURIComponent);
 	const method = request.method;
@@ -90,6 +99,17 @@ async function route(request: Request, splat: string) {
 			}
 			case "stop":
 				return actions.stopProject(id);
+			case "reassign-port":
+				return actions.reassignPort(id);
+			case "magic-login": {
+				if (key === "plan") return actions.planMagicLoginSetup(id);
+				if (key !== "apply") break;
+				const b = await body(
+					request,
+					z.object({ personas: z.array(personaInput) }),
+				);
+				return actions.applyMagicLoginSetup(id, b.personas);
+			}
 			case "restart":
 				return actions.restartProject(id);
 			case "commands":

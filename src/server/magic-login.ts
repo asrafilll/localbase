@@ -102,6 +102,21 @@ export async function createMagicLoginUrl(
 	const persona = personas?.[personaKey];
 	if (!persona) throw new Error(`${project.id} has no persona "${personaKey}"`);
 
+	if (magicLogin.provider === "supabase") {
+		const { supabaseMagicLink } = await import("./supabase");
+		const mainUrl =
+			project.config.url ??
+			Object.values(project.config.services ?? {}).find((s) => s.url)?.url;
+		const redirect = magicLogin.redirect?.startsWith("http")
+			? magicLogin.redirect
+			: mainUrl
+				? new URL(magicLogin.redirect ?? "/", mainUrl).toString()
+				: undefined;
+		return supabaseMagicLink(project.root, persona.user, redirect);
+	}
+	if (!magicLogin.endpoint)
+		throw new Error(`${project.id} has no magicLogin.endpoint configured`);
+
 	const endpoint = new URL(magicLogin.endpoint);
 	// Tokens are only ever sent to local apps, never over the network.
 	if (!isLocalDevHost(endpoint.hostname)) {

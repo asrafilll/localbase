@@ -2,6 +2,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import YAML from "yaml";
 import { parseEnvKeys } from "./envcheck";
+import {
+	frameworkCommandForPort,
+	nextFreePort,
+	nodeCommandForPort,
+} from "./portalloc";
 import type { ProjectFile, ServiceConfig } from "./schema";
 
 /**
@@ -11,11 +16,23 @@ import type { ProjectFile, ServiceConfig } from "./schema";
  * point the user reviews, never something applied silently.
  */
 
+/** Port of a http://localhost / 127.0.0.1 URL (undefined for other hosts). */
+function localPort(url: string) {
+	try {
+		const u = new URL(url);
+		if (!/^(localhost|127\.0\.0\.1)$/.test(u.hostname)) return undefined;
+		return Number(u.port || 80);
+	} catch {
+		return undefined;
+	}
+}
+
 type CommandDef = {
 	command: string;
 	longRunning?: boolean;
 	cwd?: string;
 	label?: string;
+	env?: Record<string, string>;
 };
 
 export type Detection = {
@@ -236,8 +253,21 @@ function laravelDatabase(env: Record<string, string>): ProjectFile["database"] {
 export async function detectProject(
 	root: string,
 	portHint?: number,
+	/** Ports already used by other projects or processes -> who uses them. */
+	taken: Map<number, string> = new Map(),
 ): Promise<Detection> {
 	const notes: string[] = [];
+	// How the main dev server is started, so its port can be changed if taken.
+	let startSource:
+		| {
+				kind: "node";
+				pm: string;
+				framework?: string;
+				scriptName: string;
+				script: string;
+		  }
+		| { kind: "artisan" | "django" | "rails-server" | "rails-dev" }
+		| null = null;
 	const config: ProjectFile = { name: path.basename(root) };
 	const services: Record<string, ServiceConfig> = {};
 	const commands: Record<string, CommandDef> = {};
@@ -268,6 +298,7 @@ export async function detectProject(
 		commands.start = composer?.scripts?.dev
 			? { command: "composer run dev", longRunning: true }
 			: { command: "php artisan serve", longRunning: true };
+		if (!composer?.scripts?.dev) startSource = { kind: "artisan" };
 		commands.queue = {
 			command: "php artisan queue:work",
 			longRunning: true,
@@ -314,6 +345,7 @@ export async function detectProject(
 			command: "python manage.py runserver",
 			longRunning: true,
 		};
+		startSource = { kind: "django" };
 		commands.migrate = {
 			command: "python manage.py migrate",
 			label: "Migrate",
@@ -323,9 +355,11 @@ export async function detectProject(
 		notes.push("Rails app (bin/rails)");
 		stack.add("Rails").add("Ruby");
 		services.web = { label: "Web", kind: "web", url: "http://localhost:3000" };
-		commands.start = (await exists(path.join(root, "bin", "dev")))
+		const hasBinDev = await exists(path.join(root, "bin", "dev"));
+		commands.start = hasBinDev
 			? { command: "bin/dev", longRunning: true }
 			: { command: "bin/rails server", longRunning: true };
+		startSource = { kind: hasBinDev ? "rails-dev" : "rails-server" };
 		commands.seed = { command: "bin/rails db:seed", label: "Seed database" };
 		commands["reset-db"] = {
 			command: "bin/rails db:reset",
@@ -355,6 +389,13 @@ export async function detectProject(
 			}
 		} else if (devScript && !isDjango && !isRails) {
 			commands.start = { command: runScript(pm, devScript), longRunning: true };
+			startSource = {
+				kind: "node",
+				pm,
+				framework: framework?.name,
+				scriptName: devScript,
+				script: scripts[devScript] ?? "",
+			};
 			if (port)
 				services.web = {
 					label: "Web",
@@ -422,6 +463,39 @@ export async function detectProject(
 					`monorepo app: ${rel}${app.framework ? ` (${app.framework.name})` : ""}`,
 				);
 			}
+		}
+	}
+
+	// --- Give the main dev server a free port if its usual one is taken.
+	const web = services.web;
+	const webPort = web?.url ? localPort(web.url) : undefined;
+	if (
+		web &&
+		webPort &&
+		!portHint &&
+		taken.has(webPort) &&
+		startSource &&
+		commands.start
+	) {
+		const port = nextFreePort(webPort, taken);
+		const ported =
+			startSource.kind === "node"
+				? nodeCommandForPort({ ...startSource, port })
+				: frameworkCommandForPort(startSource.kind, port);
+		if (ported) {
+			commands.start = {
+				...commands.start,
+				command: ported.command,
+				...(ported.env ? { env: ported.env } : {}),
+			};
+			web.url = web.url?.replace(`:${webPort}`, `:${port}`);
+			notes.push(
+				`port ${webPort} is used by ${taken.get(webPort)}, so this project gets ${port}`,
+			);
+		} else {
+			notes.push(
+				`port ${webPort} is also used by ${taken.get(webPort)}; the dev script sets it in a way the hub can't change, edit package.json`,
+			);
 		}
 	}
 

@@ -118,3 +118,26 @@ export const snapshotAction = createServerFn({ method: "POST" })
 	.handler(async ({ data }) => {
 		await actions.snapshotAction(data.id, data.action, data.name);
 	});
+
+export const reassignPort = createServerFn({ method: "POST" })
+	.validator(projectInput)
+	.handler(({ data }) => actions.reassignPort(data.id));
+
+export const planMagicLoginSetup = createServerFn({ method: "POST" })
+	.validator(projectInput)
+	.handler(({ data }) => actions.planMagicLoginSetup(data.id));
+
+export const applyMagicLoginSetup = createServerFn({ method: "POST" })
+	.validator(
+		z.object({
+			id: z.string(),
+			personas: z.array(
+				z.object({
+					key: z.string().regex(/^[A-Za-z0-9_-]+$/),
+					label: z.string(),
+					user: z.string().min(1),
+				}),
+			),
+		}),
+	)
+	.handler(({ data }) => actions.applyMagicLoginSetup(data.id, data.personas));

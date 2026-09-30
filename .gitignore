@@ -16,3 +16,4 @@ examples/demo-app/.scenario.json
 !desktop/dist
 desktop/src-tauri/target
 desktop/src-tauri/gen
+__pycache__

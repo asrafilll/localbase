@@ -61,6 +61,8 @@ const commandObjectSchema = z.object({
 	 * The hub owns the process and kills it on Stop.
 	 */
 	longRunning: z.boolean().optional(),
+	/** Extra environment variables, e.g. { PORT: "3001" }. */
+	env: z.record(z.string(), z.string()).optional(),
 });
 
 /** A command is either a plain string or the full object form. */
@@ -71,12 +73,23 @@ export const commandSchema = z.union([
 	commandObjectSchema,
 ]);
 
-export const magicLoginSchema = z.object({
-	/** Dev-only endpoint in the target app that accepts `?token=`. */
-	endpoint: z.url(),
-	/** Path to land on after login, passed to the app inside the signed token. */
-	redirect: z.string().optional(),
-});
+export const magicLoginSchema = z
+	.object({
+		/**
+		 * `endpoint` (default): the hub signs a token and opens the app's dev-only
+		 * login route. `supabase`: the hub asks a *local* Supabase (supabase start)
+		 * for a one-time magic link, so the app needs no code at all.
+		 */
+		provider: z.enum(["endpoint", "supabase"]).default("endpoint"),
+		/** Dev-only endpoint in the target app that accepts `?token=`. */
+		endpoint: z.url().optional(),
+		/** Path (endpoint) or URL (supabase) to land on after login. */
+		redirect: z.string().optional(),
+	})
+	.refine((m) => m.provider !== "endpoint" || m.endpoint, {
+		message: "magicLogin.endpoint is required (or set provider: supabase)",
+		path: ["endpoint"],
+	});
 
 export const scenarioSchema = z.object({
 	label: z.string(),

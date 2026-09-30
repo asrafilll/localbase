@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { LogViewer } from "#/components/LogViewer";
+import { MagicLoginSetup } from "#/components/MagicLoginSetup";
 import { ProjectWarnings } from "#/components/ProjectCard";
 import { formatUsage, StartControls } from "#/components/StartControls";
 import {
@@ -41,6 +42,8 @@ function ProjectPage() {
 	const action = useAction();
 	const [source, setSource] = useState<LogSource | null>(null);
 	const [startError, setStartError] = useState<string | null>(null);
+	// Keeps the setup panel (and its result) visible after Apply adds magicLogin.
+	const [setupDone, setSetupDone] = useState<string | null>(null);
 	useAutoRefresh();
 
 	const id = project.id;
@@ -168,8 +171,10 @@ function ProjectPage() {
 				<Section title="Personas">
 					{!project.magicLogin && (
 						<p className="text-sm text-zinc-500">
-							Add a <Mono>magicLogin.endpoint</Mono> to{" "}
-							<Mono>.dev/project.yaml</Mono> to enable one-click login.
+							One-click login isn't set up yet.{" "}
+							<a href="#magic-login" className="underline">
+								Set up Magic Login ↓
+							</a>
 						</p>
 					)}
 					<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -206,6 +211,14 @@ function ProjectPage() {
 						))}
 					</div>
 				</Section>
+			)}
+
+			{(!project.magicLogin || setupDone === id) && !project.error && (
+				<MagicLoginSetup
+					key={id}
+					projectId={id}
+					onApplied={() => setSetupDone(id)}
+				/>
 			)}
 
 			{project.scenarios.length > 0 && (

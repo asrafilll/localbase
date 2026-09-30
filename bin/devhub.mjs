@@ -31,6 +31,7 @@ Usage: devhub <command> [args] [--json]
                                 Magic Login: open the app signed in as a persona
   scenario [project] <scenario> load a scenario, then log in
   snapshot [project] save|restore|delete <name>
+  fix-port [project]            move the project to a free port (updates project.yaml)
   kill-port <port>              free a port
 
 [project] may be an id, a name or a unique prefix. Omit it inside a
@@ -378,6 +379,16 @@ async function main() {
 				name,
 			});
 			return out(res, () => console.log(green(`${action} ${name}: done`)));
+		}
+
+		case "fix-port": {
+			const { project } = await projectAndRest(args, 0);
+			const res = await api("POST", `projects/${project.id}/reassign-port`, {});
+			return out(res, (r) =>
+				console.log(
+					`${project.name}: moved :${r.from} → :${r.to}${r.usedBy ? ` (:${r.from} is used by ${r.usedBy})` : ""}.\n${dim("Review & trust the new start command in the dashboard before starting.")}`,
+				),
+			);
 		}
 
 		case "kill-port": {
