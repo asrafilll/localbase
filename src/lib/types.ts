@@ -68,6 +68,8 @@ export type ProjectSummary = {
 	/** Configured ports that another registered project also uses. */
 	sharedPorts: { port: number; projects: string[] }[];
 	hasDatabase: boolean;
+	/** The user approved this project's commands (required before Start). */
+	trusted: boolean;
 };
 
 export type EnvCheck = {

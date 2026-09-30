@@ -197,7 +197,18 @@ export function ProjectCard({ project }: { project: ProjectSummary }) {
 					</ExternalLink>
 				))}
 				<div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-					{hasStart && (
+					{hasStart && !project.trusted && (
+						<Link
+							to="/projects/$projectId"
+							params={{ projectId: project.id }}
+							hash="commands"
+							title="Commands from a repo only run after you've reviewed them once"
+							className="inline-flex h-7 items-center rounded-md bg-amber-500 px-2.5 text-xs font-medium text-white hover:bg-amber-400"
+						>
+							Review &amp; trust
+						</Link>
+					)}
+					{hasStart && project.trusted && (
 						<StartControls
 							projectId={project.id}
 							isUp={isUp}

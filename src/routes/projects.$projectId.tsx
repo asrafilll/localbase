@@ -81,6 +81,14 @@ function ProjectPage() {
 								onError={setStartError}
 							/>
 						)}
+						{hasStart && !project.trusted && (
+							<a
+								href="#commands"
+								className="inline-flex h-7 items-center rounded-md bg-amber-500 px-2.5 text-xs font-medium text-white hover:bg-amber-400"
+							>
+								Review commands to start ↓
+							</a>
+						)}
 					</div>
 				</div>
 				<ErrorBanner error={project.error ?? null} />
@@ -245,61 +253,63 @@ function ProjectPage() {
 			)}
 
 			{project.commands.length > 0 && (
-				<Section title="Commands">
-					{!project.trusted && (
-						<Card className="space-y-3 border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-900 dark:bg-amber-950/30">
-							<p>
-								<strong>Review before running.</strong> These commands
-								{project.database ? " and the database target" : ""} come from
-								this repository's <Mono>.dev/project.yaml</Mono> and run as your
-								user. You'll be asked again if they change.
-							</p>
-							<Button
-								variant="primary"
-								size="sm"
-								pending={action.pending === "trust"}
-								onClick={() =>
-									action.run("trust", () => trustProject({ data: { id } }))
-								}
-							>
-								I trust these commands
-							</Button>
-						</Card>
-					)}
-					<Card className="divide-y divide-zinc-100 dark:divide-zinc-800">
-						{project.commands.map((c) => (
-							<div
-								key={c.key}
-								className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-sm"
-							>
-								<span className="w-28 font-medium">{c.label}</span>
-								<Mono className="min-w-0 flex-1 truncate text-zinc-600 dark:text-zinc-400">
-									{c.command}
-									{c.cwd && (
-										<span className="text-zinc-400"> (in {c.cwd})</span>
-									)}
-								</Mono>
-								{c.longRunning && (
-									<span className="text-xs text-zinc-400">long-running</span>
-								)}
+				<section id="commands" className="scroll-mt-20">
+					<Section title="Commands">
+						{!project.trusted && (
+							<Card className="space-y-3 border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-900 dark:bg-amber-950/30">
+								<p>
+									<strong>Review before running.</strong> These commands
+									{project.database ? " and the database target" : ""} come from
+									this repository's <Mono>.dev/project.yaml</Mono> and run as
+									your user. You'll be asked again if they change.
+								</p>
 								<Button
+									variant="primary"
 									size="sm"
-									disabled={!project.trusted}
-									pending={action.pending === `cmd-${c.key}`}
+									pending={action.pending === "trust"}
 									onClick={() =>
-										action
-											.run(`cmd-${c.key}`, () =>
-												runCommand({ data: { id, key: c.key } }),
-											)
-											.then(showRun)
+										action.run("trust", () => trustProject({ data: { id } }))
 									}
 								>
-									Run
+									I trust these commands
 								</Button>
-							</div>
-						))}
-					</Card>
-				</Section>
+							</Card>
+						)}
+						<Card className="divide-y divide-zinc-100 dark:divide-zinc-800">
+							{project.commands.map((c) => (
+								<div
+									key={c.key}
+									className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-sm"
+								>
+									<span className="w-28 font-medium">{c.label}</span>
+									<Mono className="min-w-0 flex-1 truncate text-zinc-600 dark:text-zinc-400">
+										{c.command}
+										{c.cwd && (
+											<span className="text-zinc-400"> (in {c.cwd})</span>
+										)}
+									</Mono>
+									{c.longRunning && (
+										<span className="text-xs text-zinc-400">long-running</span>
+									)}
+									<Button
+										size="sm"
+										disabled={!project.trusted}
+										pending={action.pending === `cmd-${c.key}`}
+										onClick={() =>
+											action
+												.run(`cmd-${c.key}`, () =>
+													runCommand({ data: { id, key: c.key } }),
+												)
+												.then(showRun)
+										}
+									>
+										Run
+									</Button>
+								</div>
+							))}
+						</Card>
+					</Section>
+				</section>
 			)}
 
 			{(project.runs.length > 0 || current?.kind === "container") && (

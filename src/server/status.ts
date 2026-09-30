@@ -396,6 +396,7 @@ async function summarize(
 			envMissing: 0,
 			sharedPorts: [],
 			hasDatabase: false,
+			trusted: false,
 		};
 	}
 	const c = project.config;
@@ -449,6 +450,7 @@ async function summarize(
 			}))
 			.filter((s) => s.projects.length > 0),
 		hasDatabase: Boolean(c.database),
+		trusted: await isTrusted(project.root, c),
 	};
 }
 
