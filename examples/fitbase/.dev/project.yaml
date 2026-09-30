@@ -1,0 +1,101 @@
+# Reference project file showing every option. Lives at <repo>/.dev/project.yaml.
+# Commit it: it contains no secrets (Magic Login uses a public key in your .env).
+
+# Stable id used in URLs and as the Magic Login token audience. Defaults to a slug of `name`.
+id: fitbase
+name: Fitbase
+description: Gym Management SaaS
+type: saas
+stack: [Next.js, TypeScript, Laravel, PostgreSQL, Redis, Docker]
+
+# "Open App" target. Defaults to the first service with a url.
+url: http://localhost:3000
+
+services:
+  web:
+    label: Web
+    kind: web
+    url: http://localhost:3000            # port 3000 is derived from the url
+  admin:
+    label: Admin
+    kind: admin
+    url: http://localhost:3000/admin
+  api:
+    label: API
+    kind: api
+    url: http://localhost:8000
+    healthcheck: http://localhost:8000/up # listening but failing = "error"
+  postgres:
+    label: Postgres
+    kind: database
+    port: 5432
+    container: fitbase-db                 # status read from Docker
+    connection: postgres://localhost:5432/fitbase
+  redis:
+    label: Redis
+    kind: cache
+    port: 6379
+  worker:
+    label: Queue worker
+    kind: worker
+    command: worker                       # running while the hub-managed `worker` command runs
+
+links:
+  - label: API Docs
+    url: http://localhost:8000/docs
+  - label: Mailpit
+    url: http://localhost:8025
+  - label: Storybook
+    url: http://localhost:6006
+
+# Identities only. Never put passwords here.
+personas:
+  admin:
+    label: Super Admin
+    user: admin@fitbase.local
+    role: super_admin
+  manager:
+    label: Branch Manager
+    user: manager@fitbase.local
+  trainer:
+    label: Trainer
+    user: trainer@fitbase.local
+  member:
+    label: Member
+    user: member@fitbase.local
+
+magicLogin:
+  endpoint: http://localhost:8000/__devhub/login
+  redirect: /dashboard
+
+commands:
+  start: docker compose up -d             # string shorthand
+  stop: docker compose down
+  # restart: omitted -> the hub runs stop, then start
+  dev:
+    label: Next dev server
+    command: pnpm dev
+    cwd: web
+    longRunning: true                     # the hub owns the process and kills it on Stop
+  worker:
+    command: php artisan queue:work
+    cwd: api
+    longRunning: true
+  seed: php artisan db:seed
+  reset-db:
+    label: Reset database
+    command: php artisan migrate:fresh --seed
+    cwd: api
+  test: pnpm test
+  seed-active: php artisan db:seed --class=ActiveMemberScenario
+  seed-pt: php artisan db:seed --class=PtSevenRemainingScenario
+
+scenarios:
+  active-member:
+    label: Active Member
+    persona: member
+    seed: seed-active
+  pt-seven-left:
+    label: Member with 7/10 PT sessions remaining
+    persona: member
+    seed: seed-pt

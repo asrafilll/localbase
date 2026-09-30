@@ -1,0 +1,41 @@
+# Runnable demo. Register this folder in Local Dev Hub (Settings -> Add project).
+id: demo-app
+name: Demo App
+description: Tiny Node app to try status, commands, Magic Login and scenarios
+stack: [Node.js]
+
+services:
+  web:
+    label: Web
+    kind: web
+    url: http://localhost:4100
+    healthcheck: http://localhost:4100/health
+
+personas:
+  admin:
+    label: Super Admin
+    user: admin@demo.local
+  member:
+    label: Member
+    user: member@demo.local
+
+magicLogin:
+  endpoint: http://localhost:4100/__devhub/login
+  redirect: /
+
+commands:
+  start:
+    command: node server.ts
+    longRunning: true
+  seed-pt: node seed.ts pt-seven-left
+  seed-expired: node seed.ts expired
+
+scenarios:
+  pt-seven-left:
+    label: Member with 7/10 PT sessions
+    persona: member
+    seed: seed-pt
+  expired-member:
+    label: Expired membership
+    persona: member
+    seed: seed-expired
