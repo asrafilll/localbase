@@ -36,14 +36,57 @@ if (process.platform !== "darwin") {
 const xmlEscape = (s) =>
 	s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-function bootout() {
+const service = `${domain}/${LABEL}`;
+
+function launchctl(...args) {
 	try {
-		execFileSync("launchctl", ["bootout", `${domain}/${LABEL}`], {
-			stdio: "ignore",
-		});
-	} catch {
-		// Not loaded.
+		execFileSync("launchctl", args, { stdio: "pipe" });
+		return { ok: true, output: "" };
+	} catch (err) {
+		return {
+			ok: false,
+			output: `${err.stdout ?? ""}${err.stderr ?? ""}`.trim(),
+		};
 	}
+}
+
+const sleep = (ms) =>
+	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const isLoaded = () => launchctl("print", service).ok;
+
+/** Unloads the agent and waits until launchd has really let go of it. */
+function bootout() {
+	if (!isLoaded()) return;
+	launchctl("bootout", service);
+	for (let i = 0; i < 50 && isLoaded(); i++) sleep(100);
+}
+
+/**
+ * `bootstrap` fails with "5: Input/output error" while a previous copy is
+ * still unloading (bootout is asynchronous) or when the label was disabled,
+ * so enable it and retry a few times before giving up.
+ */
+function bootstrap() {
+	launchctl("enable", service);
+	let last = { ok: false, output: "" };
+	for (let attempt = 0; attempt < 5; attempt++) {
+		last = launchctl("bootstrap", domain, plist);
+		if (last.ok || isLoaded()) return;
+		bootout();
+		sleep(500 * (attempt + 1));
+	}
+	// Older macOS releases still accept the legacy command.
+	if (launchctl("load", "-w", plist).ok && isLoaded()) return;
+	console.error(`launchctl bootstrap ${domain} ${plist} failed:`);
+	console.error(last.output || "(no output)");
+	console.error(`
+Things to try:
+  plutil -lint ${plist}
+  launchctl bootout ${service}; pnpm agent:install
+  lsof -iTCP:${PORT} -sTCP:LISTEN   # is something else (e.g. \`pnpm start\`) on port ${PORT}?
+  tail -50 ${log}
+Or run the hub without launchd: pnpm start`);
+	process.exit(1);
 }
 
 const command = process.argv[2];
@@ -81,7 +124,7 @@ if (command === "install") {
 `,
 	);
 	bootout();
-	execFileSync("launchctl", ["bootstrap", domain, plist], { stdio: "inherit" });
+	bootstrap();
 	console.log(`Installed ${plist}`);
 	console.log(`Local Dev Hub: http://localhost:${PORT}  (logs: ${log})`);
 } else if (command === "uninstall") {
